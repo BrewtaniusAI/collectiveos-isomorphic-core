@@ -1,0 +1,6 @@
+[project]
+name = "collectiveos-isomorphic-core"
+version = "1.0.0"
+description = "The first open isomorphic intelligence model"
+authors = [{ name="BrewtaniusAI" }]
+requires-python = ">=3.10"
