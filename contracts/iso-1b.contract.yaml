@@ -1,0 +1,18 @@
+model: ISO-1B
+version: 1.0
+preconditions:
+  - input_must_be_string: true
+  - input_max_length: 2048
+invariants:
+  - lawful_or_idle_status_only: true
+  - drift_must_not_exceed: 0.05
+  - collapse_on_forced_violation: true
+governance:
+  hard_fail:
+    - drift_exceeds_threshold
+    - explicit_constraint_violation
+  soft_warn:
+    - empty_input
+recovery:
+  on_hard_fail: DIGITAL_APOPTOSIS
+  on_soft_warn: IDLE
