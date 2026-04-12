@@ -1,0 +1,11 @@
+{
+  "family": "OIMS",
+  "repository": "collectiveos-isomorphic-core",
+  "models": [
+    {"name": "ISO-1B", "status": "implemented", "release_surface": "iso-models/iso-1b"},
+    {"name": "ISO-7B", "status": "specified", "release_surface": "iso-models/iso-7b"},
+    {"name": "ISO-30B", "status": "specified", "release_surface": "iso-models/iso-30b"},
+    {"name": "ISO-Mesh", "status": "specified", "release_surface": "iso-models/iso-mesh"}
+  ],
+  "conformance": "ISOMORPHIC_FAMILY"
+}
