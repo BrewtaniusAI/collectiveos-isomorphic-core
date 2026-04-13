@@ -1,0 +1,10 @@
+cff-version: 1.2.0
+title: "CollectiveOS Isomorphic Core"
+message: "If you use this repository, please cite the associated Zenodo record."
+type: software
+authors:
+  - family-names: Brewer
+    given-names: Mark Anthony
+identifiers:
+  - type: doi
+    value: 10.5281/zenodo.19477170
