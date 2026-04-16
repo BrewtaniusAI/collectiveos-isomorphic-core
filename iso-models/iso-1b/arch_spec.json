@@ -1,0 +1,8 @@
+{
+  "model": "ISO-1B",
+  "type": "reference-organism",
+  "constraints": {
+    "max_drift": 0.05,
+    "lawful_states": ["LAWFUL", "IDLE"]
+  }
+}
