@@ -1,0 +1,25 @@
+{
+  "@context": "https://oims.collective-osp.org/conformance/v1",
+  "@type": "OIMSModelTierConformanceRecord",
+  "model": "ISO-1B",
+  "status": "restored-baseline",
+  "contract_version": "1.0",
+  "contract_model": "ISO-1B",
+  "enforced_status": "LAWFUL",
+  "is_isomorphic": true,
+  "drift": 0.0,
+  "output": "ISO-1B lawful response: baseline restored",
+  "constraint_signals": [
+    {
+      "type": "Functional",
+      "constraint": "Runtime Behavioral Contract",
+      "condition": "drift <= 0.05 and lawful status preserved",
+      "verification": "contract_enforcer",
+      "satisfied": true
+    }
+  ],
+  "proof_vault": {
+    "lineage": "pending-hash",
+    "governance": "QC→GATA→GATA PRIME"
+  }
+}
