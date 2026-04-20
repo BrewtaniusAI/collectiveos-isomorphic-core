@@ -70,6 +70,7 @@ Implemented now:
 - model-family release structure
 - scrutiny and verification documentation
 - baseline mining ops layer
+- initial stress validation layer
 
 Not yet complete:
 - public weights for all tiers
@@ -104,6 +105,8 @@ model → evaluate → enforce_contract → governed_output → constraint_signa
 - `iso-models/iso-1b/DEPLOYMENT.md`
 - `iso-models/iso-1b/arch_spec.json`
 - `iso-models/iso-1b/conformance_record.jsonld`
+- `iso-models/iso-1b/stress_tests.py`
+- `iso-models/iso-1b/STRESS.md`
 - `iso-models/iso-7b/README.md`
 - `iso-models/iso-30b/README.md`
 - `iso-models/iso-mesh/README.md`
@@ -162,7 +165,7 @@ model → evaluate → enforce_contract → governed_output → constraint_signa
 
 ## Mining Ops
 
-This repository now includes a baseline local-wallet-first mining ops layer under:
+This repository includes a baseline local-wallet-first mining ops layer under:
 
 - `ops/mining/README.md`
 - `ops/mining/wallet_setup.md`
