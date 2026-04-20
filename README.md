@@ -3,7 +3,7 @@
 
 > One intelligence. Many substrates. Same lawful identity.
 
-CollectiveOS Isomorphic Core is the implementation-facing reference surface for the **Open Isomorphic Model Standard (OIMS)**: a constraint-first architecture for building model families that preserve lawful behavioral identity across scale, substrate, and deployment class. The formal OIMS specification defines the standard as a lawful architectural contract rather than merely a model release.
+CollectiveOS Isomorphic Core is the implementation-facing reference surface for the **Open Isomorphic Model Standard (OIMS)**: a constraint-first architecture for building model families that preserve lawful behavioral identity across scale, substrate, and deployment class.
 
 This repository is designed to be:
 
@@ -25,13 +25,13 @@ It currently provides:
 
 - a runnable ISO-1B reference organism
 - a root-level runner
-- a top-level conformance artifact
-- tier-level model family structure
+- a tier-level conformance artifact
 - runtime behavioral contracts
 - governance and provenance scaffolding
-- release manifests and deployment guides
-- explicit claims, limitations, scope, terms, and verification boundaries
+- tier-level model-family structure
+- scrutiny and verification documentation
 - citation and provenance metadata
+- baseline mining ops for local-wallet-first operation
 
 The project is grounded in the broader OIMS family definition:
 - `ISO-1B`
@@ -51,7 +51,11 @@ python run_iso_family.py
 
 Then inspect:
 - `iso-models/iso-1b/conformance_record.jsonld`
-- `conformance_report.jsonld`
+
+For the fastest walkthrough, see:
+- `QUICKSTART.md`
+- `SHOWCASE.md`
+- `REVIEWER_GUIDE.md`
 
 ---
 
@@ -62,10 +66,10 @@ This repository is currently in the **release-ready architecture + executable re
 Implemented now:
 - executable ISO-1B runtime surface
 - runtime governance via contracts
-- conformance artifact generation
-- provenance scaffolding
+- provenance-aware conformance scaffolding
 - model-family release structure
 - scrutiny and verification documentation
+- baseline mining ops layer
 
 Not yet complete:
 - public weights for all tiers
@@ -85,6 +89,61 @@ model → evaluate → enforce_contract → governed_output → constraint_signa
 
 ---
 
+## Repository Surface
+
+### Core runtime
+- `run_iso_family.py`
+- `iso-models/iso-1b/model.py`
+- `iso-models/iso-1b/runtime.py`
+- `iso-models/iso-1b/contract_enforcer.py`
+- `iso-models/iso-1b/provenance.py`
+
+### Tier surface
+- `iso-models/iso-1b/README.md`
+- `iso-models/iso-1b/STATUS.md`
+- `iso-models/iso-1b/DEPLOYMENT.md`
+- `iso-models/iso-1b/arch_spec.json`
+- `iso-models/iso-1b/conformance_record.jsonld`
+- `iso-models/iso-7b/README.md`
+- `iso-models/iso-30b/README.md`
+- `iso-models/iso-mesh/README.md`
+
+### Contracts and scripts
+- `contracts/iso-1b.contract.yaml`
+- `scripts/generate_proof_vault.py`
+
+### Scrutiny and verification docs
+- `CLAIMS.md`
+- `LIMITATIONS.md`
+- `REPO_SCOPE.md`
+- `VERIFICATION.md`
+- `TERMS.md`
+- `HARDENING.md`
+- `KNOWN_GAPS.md`
+- `REVIEWER_GUIDE.md`
+- `REPRODUCIBILITY.md`
+- `CONFORMANCE_SCHEMA.md`
+
+### Release docs
+- `MODEL_MANIFEST.json`
+- `RELEASE_STATUS.md`
+- `RELEASE_CHECKLIST.md`
+
+### Utility docs
+- `QUICKSTART.md`
+- `SHOWCASE.md`
+- `CITATIONS.md`
+- `CITATION.cff`
+- `ORIGINALITY.md`
+
+### Mining ops
+- `ops/mining/README.md`
+- `ops/mining/wallet_setup.md`
+- `ops/mining/start_miner.ps1`
+- `ops/mining/weekly_offload.md`
+
+---
+
 ## Technical Documentation
 
 - Claims → `CLAIMS.md`
@@ -101,6 +160,24 @@ model → evaluate → enforce_contract → governed_output → constraint_signa
 
 ---
 
+## Mining Ops
+
+This repository now includes a baseline local-wallet-first mining ops layer under:
+
+- `ops/mining/README.md`
+- `ops/mining/wallet_setup.md`
+- `ops/mining/start_miner.ps1`
+- `ops/mining/weekly_offload.md`
+
+Recommended baseline path:
+- coin: Monero (XMR)
+- algorithm: RandomX
+- miner: XMRig
+- payout: direct to local wallet
+- weekly offload: handled manually first, then automated later
+
+---
+
 ## Final Position
 
 This repository is the **bounded, executable, auditable, and governed reference surface** for the OIMS architecture.
@@ -110,3 +187,4 @@ It is designed to:
 - enforce
 - explain
 - hold shape under scrutiny
+- support immediate local monetization operations once baseline execution is live
