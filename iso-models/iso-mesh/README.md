@@ -1,11 +1,12 @@
 # ISO-Mesh
 
-## Overview
+ISO-Mesh is implemented as the sequential OIMS family runner:
 
-ISO-Mesh represents the distributed organism form of the OIMS architecture.
+```bash
+python -m oims family --prompt "family conformance probe"
+```
 
-## Current status
-Specified, not yet implemented.
+It executes ISO-1B, ISO-7B, and ISO-30B one at a time, releases each backend, compares the runtime
+invariant vectors, and writes `artifacts/conformance_report.jsonld`.
 
-## Intended role
-A multi-node execution surface preserving lawful identity across distributed systems.
+This is a local sequential mesh. Distributed multi-node execution remains future work.

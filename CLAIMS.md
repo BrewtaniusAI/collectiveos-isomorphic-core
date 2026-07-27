@@ -3,39 +3,42 @@
 This file defines the repository's primary claims, their operational meaning, supporting evidence, and explicit non-claims.
 
 ## Claim 1
-This repository is the open implementation surface for an isomorphic intelligence architecture.
+This repository implements a bounded runtime-invariant model-family architecture.
 
 ### Operational meaning
 Within this repository, an isomorphic intelligence architecture means a system that:
 - enforces constraint-first execution
-- maintains deterministic state transitions within the implemented harness
-- validates conformance across defined tiers and artifacts
+- maintains deterministic governance transitions within the implemented harness
+- validates the same runtime invariant vector across three pinned local-weight tiers
 - produces auditable conformance records
 
 ### Evidence
 See:
-- `conformance_report.jsonld`
+- generated `artifacts/conformance_report.jsonld`
 - `run_iso_family.py`
-- `iso-models/iso-1b/runtime.py`
+- `oims/runtime.py`
 - `VERIFICATION.md`
 
 ### Non-claim
-This does not claim universal scientific consensus on terminology or full frontier-scale release completeness for all tiers.
+This does not claim identical neural weights, identical generated language, intrinsic safety of the
+base models, universal scientific consensus, or independent proof of model-level isomorphism.
 
 ## Claim 2
-The ISO-1B organism surface is runtime-governed.
+ISO-1B, ISO-7B, and ISO-30B share input-first runtime governance.
 
 ### Operational meaning
-The included execution path applies runtime behavioral contract checks before emitting the tier-level conformance artifact.
+The execution path validates input before constructing a weight backend, validates output after
+inference, and atomically writes a sealed tier receipt.
 
 ### Evidence
 See:
-- `contracts/iso-1b.contract.yaml`
-- `iso-models/iso-1b/contract_enforcer.py`
-- `iso-models/iso-1b/runtime.py`
+- `contracts/oims-family.contract.yaml`
+- `oims/contracts.py`
+- `oims/runtime.py`
 
 ### Non-claim
-This does not imply that all future tiers are already implemented or that every deployment environment is identical.
+This does not imply that base-model internals are governed or that every deployment environment is
+identical. Governance is enforced by the OIMS runtime boundary.
 
 ## Claim 3
 The repository is designed to be auditable and scrutiny-ready.

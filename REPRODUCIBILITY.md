@@ -1,18 +1,22 @@
 # Reproducibility
 
-## How to reproduce the core behavior
+Reproduction is anchored by:
 
-1. Clone the repository
-2. Run:
+- immutable Hugging Face repository revisions;
+- exact GGUF filenames;
+- local SHA-256 weight locks;
+- one shared contract hash;
+- deterministic decoding settings;
+- source commit capture;
+- sealed tier and family records.
+
 ```bash
-python run_iso_family.py
+python -m pip install -e ".[weights]"
+python -m oims weights pull --tier all
+python -m oims weights check --tier all --full-hash
+python -m oims family --prompt "family conformance probe"
 ```
 
-3. Inspect the generated artifact:
-- `iso-models/iso-1b/conformance_record.jsonld`
-
-## Determinism
-The ISO-1B reference surface is designed to be deterministic within its defined constraints.
-
-## Boundaries
-Reproducibility applies to the implemented ISO-1B tier only.
+Generated text can still vary across llama.cpp versions, hardware kernels, and floating-point
+execution. OIMS reproducibility therefore distinguishes governance-transition reproducibility from
+byte-identical model-output reproducibility.

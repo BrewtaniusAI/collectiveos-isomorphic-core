@@ -1,24 +1,22 @@
 # Hardening Status
 
-This file summarizes the repository's defensive posture and the remaining gap to a full public model-family release.
+Implemented:
 
-## Current hardening layers
-- Claims are explicitly defined (`CLAIMS.md`)
-- Terms are operationally defined (`TERMS.md`)
-- Limitations are stated (`LIMITATIONS.md`)
-- Scope is bounded (`REPO_SCOPE.md`)
-- Verification surface is separated from external context (`VERIFICATION.md`)
-- Runtime contracts exist for ISO-1B
-- Conformance artifacts are present
-- A runnable reference organism surface exists for ISO-1B
+- pre-inference input enforcement;
+- pinned upstream model revisions and exact filenames;
+- local weight hashing and inventory locks;
+- output validation;
+- atomic artifact replacement;
+- prompt, contract, output, record, and source-commit evidence;
+- explicit separation of fixture and weight-backed evidence;
+- multi-version Python CI;
+- no model weights, secrets, environments, or generated receipts committed to Git.
 
-## What this protects against
-- vague claims
-- terminology drift
-- scope confusion
-- reproducibility criticism
-- misinterpretation of what is and is not verified
+Pending:
 
-## Remaining gap
-The repository is hardened as a standard, implementation, and release surface.
-The remaining gap to a full public model-family release is the publication of complete tier artifacts such as weights, reproducible training recipes, tokenizer assets, and full tier-level conformance runs.
+- signed receipts;
+- external WORM anchoring;
+- dependency lock and SBOM;
+- target-machine GPU CI;
+- independent adversarial and semantic-equivalence evaluation;
+- source-code license selection.

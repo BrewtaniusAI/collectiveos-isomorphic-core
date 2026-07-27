@@ -1,24 +1,41 @@
 # Verification
 
-This document defines what is verified within this repository and how.
+## Verified automatically
 
-## Verified in this repository
-- ISO-1B runtime execution
-- Contract enforcement behavior
-- Conformance artifact generation
+- model repositories, GGUF filenames, and immutable revisions are manifest-pinned;
+- invalid inputs collapse or idle before backend construction;
+- all tiers use the same contract hash, governance order, and receipt schema;
+- records are written atomically and sealed with SHA-256;
+- record tampering is detected;
+- fixture evidence cannot be labeled as weight-backed;
+- missing local weight files are reported per tier.
 
-## Verification method
-- Direct execution of `run_iso_family.py`
-- Inspection of generated JSON artifacts
-- Review of contract enforcement logic
+Run:
+
+```bash
+python -m unittest discover -v
+```
+
+## Verified on a target GPU
+
+A complete local run must execute:
+
+```bash
+python -m oims weights check --tier all --full-hash
+python -m oims family --prompt "family conformance probe"
+```
+
+The resulting family report must state:
+
+```json
+{
+  "runtime_isomorphic": true,
+  "weight_execution_verified": true,
+  "evidence_class": "WEIGHT_BACKED"
+}
+```
 
 ## Boundary
-This verification applies only to the implemented code surface.
 
-It does not imply:
-- full model-family release completeness
-- universal correctness for all inputs
-- verification of external research claims
-
-## Purpose
-To provide a clear, testable boundary between implementation and interpretation.
+Runtime-invariant conformance does not prove identical neural weights, identical wording,
+base-model safety, or universal semantic equivalence.

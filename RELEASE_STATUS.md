@@ -1,15 +1,18 @@
 # Release Status
 
 ## Current phase
-Release-ready architecture with executable ISO-1B reference organism.
+Executable multi-tier local-weight release candidate.
 
 ## Implemented
-- ISO-1B runtime surface
-- Runtime governance via contracts
-- Conformance artifact generation
-- Provenance scaffolding
+- ISO-1B, ISO-7B, and ISO-30B pinned GGUF bindings
+- sequential local-weight execution
+- input-first shared family contract
+- per-tier and family conformance receipts
+- prompt, contract, output, record, and weight hashing
+- assertive tests and CI
 
 ## Pending
-- Full model artifacts (weights, tokenizer, recipes)
-- Higher-tier executable models
-- Full multi-tier conformance
+- physical weight download and CUDA smoke run on target hardware
+- signed or external WORM receipts
+- independent semantic-equivalence benchmark corpus
+- OIMS source-code license selection

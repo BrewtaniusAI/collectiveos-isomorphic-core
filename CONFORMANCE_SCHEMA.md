@@ -1,20 +1,23 @@
 # Conformance Schema
 
-This document defines the conformance record structure for OIMS repository artifacts.
+Tier records use `OIMSModelTierConformanceRecord` version 2 and contain:
 
-## Core fields
-- `@context`
-- `@type`
-- `model`
-- `status`
-- `is_isomorphic`
-- `drift`
-- `output`
+- tier, parameter class, and pinned weight source;
+- prompt, contract, output, source commit, and sealed-record hashes;
+- preflight decision;
+- backend identity and real-weight flag;
+- local weight inventory;
+- runtime invariant vector;
+- lawful status and runtime drift.
 
-## Runtime governance fields
-- `contract_version`
-- `contract_model`
-- `enforced_status`
+Family reports use `OIMSFamilyConformanceReport` version 2 and contain:
 
-## Constraint signal provenance
-Each conformance check may include a `constraint_signals` array and a `proof_vault` object to provide epistemic grounding and lineage metadata.
+- all executed tiers;
+- tier record hashes;
+- shared contract hash;
+- invariant mismatch ratio;
+- runtime-isomorphic decision;
+- independent real-weight execution decision;
+- `WEIGHT_BACKED` or `TEST_OR_INCOMPLETE` evidence classification.
+
+The Python implementation is authoritative until a standalone JSON Schema is published.

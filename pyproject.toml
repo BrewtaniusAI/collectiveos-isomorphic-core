@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "collectiveos-isomorphic-core"
+version = "0.2.0"
+description = "A governed, multi-tier local-weight runtime for the Open Isomorphic Model Standard"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Mark Anthony Brewer" }]
+dependencies = [
+  "PyYAML>=6.0.1,<7",
+]
+
+[project.optional-dependencies]
+weights = [
+  "huggingface-hub>=0.27,<2",
+]
+cpu = [
+  "llama-cpp-python>=0.3.2,<1",
+]
+dev = [
+  "pytest>=8,<10",
+  "ruff>=0.9,<1",
+]
+
+[project.scripts]
+oims = "oims.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["oims*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

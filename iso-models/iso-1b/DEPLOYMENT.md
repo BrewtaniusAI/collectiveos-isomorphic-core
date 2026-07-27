@@ -1,18 +1,8 @@
 # ISO-1B Deployment
 
-## Local execution
-
-Run from repository root:
-
 ```bash
-python run_iso_family.py
+python -m oims weights pull --tier ISO-1B
+python -m oims run --tier ISO-1B --prompt "governed probe"
 ```
 
-## Output
-
-The run generates a conformance record:
-- `iso-models/iso-1b/conformance_record.jsonld`
-
-## Notes
-
-This tier is intended for local execution and validation only.
+The receipt is written to `artifacts/iso-1b-conformance.jsonld`.

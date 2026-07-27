@@ -1,193 +1,148 @@
-# 🧠 CollectiveOS Isomorphic Core
-## The First Open Isomorphic Intelligence Model
+# CollectiveOS Isomorphic Core
 
-> One intelligence. Many substrates. Same lawful identity.
+One governed runtime contract. Three real local-weight tiers. Auditable family receipts.
 
-CollectiveOS Isomorphic Core is the implementation-facing reference surface for the **Open Isomorphic Model Standard (OIMS)**: a constraint-first architecture for building model families that preserve lawful behavioral identity across scale, substrate, and deployment class.
+CollectiveOS Isomorphic Core is the implementation surface for the Open Isomorphic Model
+Standard (OIMS). It binds three instruction-model weight classes to one input-first governance
+contract and one conformance-record schema:
 
-This repository is designed to be:
+| OIMS tier | Bound model | Quantization | Download |
+| --- | --- | --- | ---: |
+| ISO-1B | Qwen2.5-1.5B-Instruct | Q4_K_M GGUF | 1.1 GB |
+| ISO-7B | Qwen2.5-7B-Instruct | Q4_K_M GGUF | 4.7 GB |
+| ISO-30B | Qwen2.5-32B-Instruct | Q4_K_M GGUF | 19.9 GB |
 
-- executable
-- inspectable
-- auditable
-- reproducible
-- defensible under scrutiny
+The model repositories are official Qwen GGUF releases under Apache-2.0. Every tier is pinned to
+an immutable Hugging Face commit in `MODEL_MANIFEST.json`. Weight files stay local and are never
+committed to Git.
 
-It is not a generic wrapper, not a vague research dump, and not a claim without artifacts.
+## What runs
 
----
+- real GGUF inference through `llama-cpp-python`;
+- all three tiers sequentially, so only one model occupies GPU memory at a time;
+- pre-inference input governance;
+- post-inference output validation;
+- per-tier sealed JSON-LD receipts;
+- a family conformance report that compares runtime invariants;
+- cryptographic hashes for contracts, prompts, outputs, records, and downloaded weight files;
+- mandatory weight-lock revalidation before every real model load;
+- deterministic fixtures for CI that are always labeled as non-weight evidence.
 
-## What This Repository Is
+The ISO-30B name is retained as the OIMS capacity class. Its current weight binding is the
+32.5-billion-parameter Qwen2.5-32B model.
 
-This repository is the **open implementation and verification surface** for the OIMS architecture.
+## Quick start
 
-It currently provides:
+Python 3.10 or newer is required.
 
-- a runnable ISO-1B reference organism
-- a root-level runner
-- a tier-level conformance artifact
-- runtime behavioral contracts
-- governance and provenance scaffolding
-- tier-level model-family structure
-- scrutiny and verification documentation
-- citation and provenance metadata
-- baseline mining ops for local-wallet-first operation
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -e ".[weights]"
+```
 
-The project is grounded in the broader OIMS family definition:
-- `ISO-1B`
-- `ISO-7B`
-- `ISO-30B`
-- `ISO-Mesh`
+Install a CUDA-enabled `llama-cpp-python` build for NVIDIA GPU offload before running the 7B or
+32B tier. Platform-specific instructions are in `WEIGHTS.md`.
 
----
-
-## Quick Start
-
-Run the current organism surface from the repository root:
+Check the machine:
 
 ```bash
-python run_iso_family.py
+python -m oims doctor
 ```
 
-Then inspect:
-- `iso-models/iso-1b/conformance_record.jsonld`
+Download and hash all 25.7 GB of pinned weights:
 
-For the fastest walkthrough, see:
-- `QUICKSTART.md`
-- `SHOWCASE.md`
-- `REVIEWER_GUIDE.md`
+```powershell
+.\scripts\download_weights.ps1 -Tier all
+```
 
----
+Run every tier sequentially:
 
-## Current Focus
+```powershell
+.\scripts\run_all_weights.ps1 -Prompt "Explain the OIMS runtime contract."
+```
 
-This repository is currently in the **release-ready architecture + executable reference organism** phase.
+Equivalent Python commands:
 
-Implemented now:
-- executable ISO-1B runtime surface
-- runtime governance via contracts
-- provenance-aware conformance scaffolding
-- model-family release structure
-- scrutiny and verification documentation
-- baseline mining ops layer
-- initial stress validation layer
+```bash
+python -m oims weights pull --tier all
+python -m oims weights check --tier all
+python -m oims family --prompt "Explain the OIMS runtime contract."
+```
 
-Not yet complete:
-- public weights for all tiers
-- tokenizer assets/specs for all tiers
-- full executable higher tiers beyond ISO-1B
-- complete conformance execution across all tiers
+Run one tier:
 
----
+```bash
+python -m oims run --tier ISO-7B --prompt "Give a bounded systems analysis."
+```
 
-## Core Runtime Path
-
-The current ISO-1B organism path is:
+Artifacts are written under `artifacts/`:
 
 ```text
-model → evaluate → enforce_contract → governed_output → constraint_signals → proof_vault → conformance_record
+artifacts/
+├── iso-1b-conformance.jsonld
+├── iso-7b-conformance.jsonld
+├── iso-30b-conformance.jsonld
+└── conformance_report.jsonld
 ```
 
----
+## Runtime sequence
 
-## Repository Surface
+```text
+validate input
+  → resolve pinned local weights
+  → run one tier
+  → validate output
+  → seal tier receipt
+  → release model memory
+  → run next tier
+  → compare invariant vectors
+  → seal family report
+```
 
-### Core runtime
-- `run_iso_family.py`
-- `iso-models/iso-1b/model.py`
-- `iso-models/iso-1b/runtime.py`
-- `iso-models/iso-1b/contract_enforcer.py`
-- `iso-models/iso-1b/provenance.py`
+Input validation happens before the weight backend is constructed. Wrong input types and
+over-length inputs therefore cannot reach model inference.
 
-### Tier surface
-- `iso-models/iso-1b/README.md`
-- `iso-models/iso-1b/STATUS.md`
-- `iso-models/iso-1b/DEPLOYMENT.md`
-- `iso-models/iso-1b/arch_spec.json`
-- `iso-models/iso-1b/conformance_record.jsonld`
-- `iso-models/iso-1b/stress_tests.py`
-- `iso-models/iso-1b/STRESS.md`
-- `iso-models/iso-7b/README.md`
-- `iso-models/iso-30b/README.md`
-- `iso-models/iso-mesh/README.md`
+## Verification
 
-### Contracts and scripts
-- `contracts/iso-1b.contract.yaml`
-- `scripts/generate_proof_vault.py`
+Run the dependency-light test suite:
 
-### Scrutiny and verification docs
-- `CLAIMS.md`
-- `LIMITATIONS.md`
-- `REPO_SCOPE.md`
-- `VERIFICATION.md`
-- `TERMS.md`
-- `HARDENING.md`
-- `KNOWN_GAPS.md`
-- `REVIEWER_GUIDE.md`
-- `REPRODUCIBILITY.md`
-- `CONFORMANCE_SCHEMA.md`
+```bash
+python -m unittest discover -v
+python -m oims --artifacts-dir artifacts-smoke family \
+  --backend fixture \
+  --prompt "fixture conformance probe"
+```
 
-### Release docs
-- `MODEL_MANIFEST.json`
-- `RELEASE_STATUS.md`
-- `RELEASE_CHECKLIST.md`
+Fixture output validates governance and receipt mechanics only. A report is labeled
+`WEIGHT_BACKED` only when every tier was executed by the real local-weight backend.
 
-### Utility docs
-- `QUICKSTART.md`
-- `SHOWCASE.md`
-- `CITATIONS.md`
-- `CITATION.cff`
-- `ORIGINALITY.md`
+## What runtime isomorphism means here
 
-### Mining ops
-- `ops/mining/README.md`
-- `ops/mining/wallet_setup.md`
-- `ops/mining/start_miner.ps1`
-- `ops/mining/weekly_offload.md`
+OIMS runtime isomorphism is a bounded engineering claim: every tier must preserve the same
+contract hash, contract version, family identity, governance order, and response schema. Runtime
+drift is the mismatch ratio across that invariant vector.
 
----
+It does **not** mean that the three neural networks have identical weights, produce identical
+wording, or constitute universal scientific proof. Model-quality and semantic-equivalence
+benchmarks remain separate work.
 
-## Technical Documentation
+## Repository map
 
-- Claims → `CLAIMS.md`
-- Limitations → `LIMITATIONS.md`
-- Scope → `REPO_SCOPE.md`
-- Verification → `VERIFICATION.md`
-- Terms → `TERMS.md`
-- Hardening → `HARDENING.md`
-- Release state → `RELEASE_STATUS.md`
-- Release checklist → `RELEASE_CHECKLIST.md`
-- Known gaps → `KNOWN_GAPS.md`
-- Reviewer guide → `REVIEWER_GUIDE.md`
-- Citations → `CITATIONS.md`
+- `oims/` — package runtime, backends, contracts, receipts, and weight management
+- `contracts/oims-family.contract.yaml` — shared family contract
+- `MODEL_MANIFEST.json` — pinned model and file manifest
+- `tests/` — assertive governance, manifest, receipt, and family tests
+- `.github/workflows/ci.yml` — Python 3.10/3.12 CI
+- `iso-models/` — tier-level release documentation
+- `WEIGHTS.md` — download, hardware, CUDA, and troubleshooting guide
+- `CLAIMS.md` / `LIMITATIONS.md` — precise evidence boundaries
 
----
+## License boundary
 
-## Mining Ops
+The bound Qwen2.5 GGUF weights declare Apache-2.0. This repository does not currently declare a
+license for the OIMS-authored source code; public visibility alone does not grant reuse rights.
+Add the project’s intended custom license before a formal source release.
 
-This repository includes a baseline local-wallet-first mining ops layer under:
-
-- `ops/mining/README.md`
-- `ops/mining/wallet_setup.md`
-- `ops/mining/start_miner.ps1`
-- `ops/mining/weekly_offload.md`
-
-Recommended baseline path:
-- coin: Monero (XMR)
-- algorithm: RandomX
-- miner: XMRig
-- payout: direct to local wallet
-- weekly offload: handled manually first, then automated later
-
----
-
-## Final Position
-
-This repository is the **bounded, executable, auditable, and governed reference surface** for the OIMS architecture.
-
-It is designed to:
-- run
-- enforce
-- explain
-- hold shape under scrutiny
-- support immediate local monetization operations once baseline execution is live
+Associated theoretical context: <https://doi.org/10.5281/zenodo.19477170>
