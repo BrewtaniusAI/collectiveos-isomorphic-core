@@ -24,7 +24,9 @@ RunRequest = Callable[[dict[str, Any]], dict[str, Any]]
 def normalize_request(value: object) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise TypeError("Request must be a JSON object")
-    unknown = sorted(set(value) - {"request_id", "agent", "prompt", "message", "max_tokens"})
+    unknown = sorted(
+        set(value) - {"request_id", "agent", "prompt", "message", "max_tokens"}
+    )
     if unknown:
         raise ValueError(f"Unsupported request fields: {', '.join(unknown)}")
     prompt = value.get("prompt", value.get("message"))
@@ -51,12 +53,10 @@ def health_report(
     weights_dir: Path,
 ) -> dict[str, Any]:
     tiers = [
-        inspect_tier(spec, weights_dir, compute_hashes=False)
-        for spec in manifest.tiers
+        inspect_tier(spec, weights_dir, compute_hashes=False) for spec in manifest.tiers
     ]
     ready = all(
-        item["lock_matches_manifest"] and item["size_verified"]
-        for item in tiers
+        item["lock_matches_manifest"] and item["size_verified"] for item in tiers
     )
     return {
         "ok": True,
@@ -64,7 +64,9 @@ def health_report(
         "family": manifest.family,
         "loopback_only": True,
         "ready_for_inference": ready,
-        "evidence_class": "WEIGHT_BACKED_PENDING_RUNTIME_PROBE" if ready else "WEIGHTS_UNAVAILABLE",
+        "evidence_class": "WEIGHT_BACKED_PENDING_RUNTIME_PROBE"
+        if ready
+        else "WEIGHTS_UNAVAILABLE",
         "tiers": [
             {
                 "tier": item["tier"],
@@ -102,7 +104,9 @@ def build_handler(
                 self._json(HTTPStatus.BAD_REQUEST, {"error": "invalid_content_length"})
                 return
             if length <= 0 or length > MAX_REQUEST_BYTES:
-                self._json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "request_too_large"})
+                self._json(
+                    HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "request_too_large"}
+                )
                 return
             try:
                 body = json.loads(self.rfile.read(length))

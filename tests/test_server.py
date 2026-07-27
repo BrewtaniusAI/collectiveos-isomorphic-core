@@ -6,6 +6,7 @@ from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
 
 import pytest
+
 from oims.server import LOOPBACK_HOSTS, build_handler, normalize_request, serve
 
 
@@ -32,7 +33,10 @@ def test_http_chat_and_health() -> None:
 
     def runner(request: dict) -> dict:
         runner_calls.append(request)
-        return {"result": {"lawful": True, "output": "answer"}, "record_sha256": "a" * 64}
+        return {
+            "result": {"lawful": True, "output": "answer"},
+            "record_sha256": "a" * 64,
+        }
 
     handler = build_handler(
         runner=runner,
@@ -54,7 +58,10 @@ def test_http_chat_and_health() -> None:
             "POST",
             "/v1/chat",
             body=body,
-            headers={"Content-Type": "application/json", "Content-Length": str(len(body))},
+            headers={
+                "Content-Type": "application/json",
+                "Content-Length": str(len(body)),
+            },
         )
         response = connection.getresponse()
         assert response.status == 200
