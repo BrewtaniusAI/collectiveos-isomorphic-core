@@ -1,12 +1,14 @@
 # ISO-Mesh
 
-ISO-Mesh is implemented as the sequential OIMS family runner:
+ISO-Mesh 0.3.0 has two explicit local functions:
+
+1. resolve CollectiveOS role aliases to their declared heterogeneous tier;
+2. execute Qwen2, Mistral, and Kimi Linear sequentially for family conformance.
 
 ```bash
-python -m oims family --prompt "family conformance probe"
+python -m oims mesh --prompt "heterogeneous family probe"
+python -m oims collective --agent Cypher --prompt "audit this claim"
 ```
 
-It executes ISO-1B, ISO-7B, and ISO-30B one at a time, releases each backend, compares the runtime
-invariant vectors, and writes `artifacts/conformance_report.jsonld`.
-
-This is a local sequential mesh. Distributed multi-node execution remains future work.
+The family report declares the mesh strategy, member order, providers, architectures, and nested
+tier hashes. Distributed node transport, scheduling, identity, and recovery remain future work.

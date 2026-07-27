@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -13,6 +14,12 @@ SYSTEM_PROMPT = """You are an OIMS governed intelligence tier.
 Answer the user's request directly and accurately.
 Do not claim evidence you do not possess.
 If the request cannot be answered lawfully, explain the boundary instead of inventing facts."""
+MIN_LLAMA_CPP_VERSION = (0, 3, 34)
+
+
+def llama_cpp_version_supported(version: str) -> bool:
+    parts = tuple(int(item) for item in re.findall(r"\d+", version)[:3])
+    return len(parts) == 3 and parts >= MIN_LLAMA_CPP_VERSION
 
 
 class BackendError(RuntimeError):
@@ -63,6 +70,7 @@ class LlamaCppBackend:
         n_gpu_layers: int | None = None,
         n_ctx: int | None = None,
         seed: int = 3407,
+        system_prompt: str = SYSTEM_PROMPT,
     ) -> None:
         from .weights import inspect_tier
 
@@ -72,12 +80,13 @@ class LlamaCppBackend:
             raise BackendError(f"{spec.name} weight verification failed: {exc}") from exc
         if not weight_status["complete"]:
             resolve_weight_files(spec, weights_root)
-        if not weight_status["hash_verified"]:
+        if not weight_status["hash_verified"] or not weight_status["lock_matches_manifest"]:
             raise BackendError(
-                f"{spec.name} weight hashes do not match its local lock. "
+                f"{spec.name} weight hashes do not match the pinned upstream identity. "
                 f"Run: python -m oims weights pull --tier {spec.name}"
             )
         try:
+            import llama_cpp
             from llama_cpp import Llama
         except ImportError as exc:
             raise BackendError(
@@ -89,11 +98,21 @@ class LlamaCppBackend:
         self.spec = spec
         self.files = files
         self.weight_status = weight_status
+        self.system_prompt = system_prompt
+        self.n_ctx = n_ctx or spec.context_length
+        self.n_gpu_layers = spec.gpu_layers if n_gpu_layers is None else n_gpu_layers
+        self.seed = seed
+        self.llama_cpp_version = getattr(llama_cpp, "__version__", "unknown")
+        if not llama_cpp_version_supported(self.llama_cpp_version):
+            raise BackendError(
+                "llama-cpp-python>=0.3.34 is required for the heterogeneous "
+                "family, including Kimi Linear."
+            )
         try:
             self._model = Llama(
                 model_path=str(files[0]),
-                n_ctx=n_ctx or spec.context_length,
-                n_gpu_layers=spec.gpu_layers if n_gpu_layers is None else n_gpu_layers,
+                n_ctx=self.n_ctx,
+                n_gpu_layers=self.n_gpu_layers,
                 seed=seed,
                 verbose=False,
             )
@@ -102,12 +121,21 @@ class LlamaCppBackend:
 
     def generate(self, prompt: str, *, max_tokens: int) -> BackendResult:
         started = time.perf_counter()
+        if self.spec.chat_system_mode == "prepend-user":
+            messages = [
+                {
+                    "role": "user",
+                    "content": f"{self.system_prompt}\n\nUser task:\n{prompt}",
+                }
+            ]
+        else:
+            messages = [
+                {"role": "system", "content": self.system_prompt},
+                {"role": "user", "content": prompt},
+            ]
         try:
             response = self._model.create_chat_completion(
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": prompt},
-                ],
+                messages=messages,
                 temperature=0.0,
                 top_p=1.0,
                 max_tokens=max_tokens,
@@ -129,6 +157,15 @@ class LlamaCppBackend:
                 "model_file": self.files[0].name,
                 "split_files": len(self.files),
                 "weight_hash_verified": True,
+                "upstream_identity_verified": True,
+                "verified_weight_inventory": self.weight_status,
+                "provider": self.spec.provider,
+                "architecture_family": self.spec.architecture_family,
+                "llama_cpp_version": self.llama_cpp_version,
+                "n_ctx": self.n_ctx,
+                "n_gpu_layers": self.n_gpu_layers,
+                "seed": self.seed,
+                "chat_system_mode": self.spec.chat_system_mode,
                 "usage": usage,
             },
         )

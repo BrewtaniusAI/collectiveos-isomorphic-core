@@ -12,7 +12,13 @@ The assertive suite covers:
 - maximum-length boundary;
 - empty model-output collapse;
 - manifest pinning;
+- exact upstream weight identity;
+- heterogeneous architecture/provider enforcement;
+- model-specific chat-system modes;
 - all-tier invariant comparison;
+- agent alias and role-binding validation;
+- CollectiveOS nested receipt verification;
+- JSON Schema publication;
 - fixture/weight evidence separation;
 - receipt tamper detection;
 - missing weight inventory.

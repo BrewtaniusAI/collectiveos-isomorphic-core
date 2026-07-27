@@ -35,6 +35,7 @@ class RuntimeContract:
     lawful_states: tuple[str, ...]
     max_runtime_drift: float
     require_nonempty_output: bool
+    governance_workflow: tuple[str, ...]
     source_path: Path
     source_hash: str
 
@@ -50,6 +51,10 @@ def load_contract(path: Path | str = DEFAULT_CONTRACT_PATH) -> RuntimeContract:
     try:
         preconditions = raw["preconditions"]
         invariants = raw["invariants"]
+        governance = raw["governance"]
+        workflow = tuple(str(item) for item in governance["workflow"])
+        if workflow != ("QC", "GATA", "GATA_PRIME"):
+            raise ContractError("governance workflow must be QC -> GATA -> GATA_PRIME")
         return RuntimeContract(
             family=str(raw["family"]),
             version=str(raw["version"]),
@@ -57,6 +62,7 @@ def load_contract(path: Path | str = DEFAULT_CONTRACT_PATH) -> RuntimeContract:
             lawful_states=tuple(str(item) for item in invariants["lawful_states"]),
             max_runtime_drift=float(invariants["max_runtime_drift"]),
             require_nonempty_output=bool(invariants["require_nonempty_output"]),
+            governance_workflow=workflow,
             source_path=contract_path,
             source_hash=hashlib.sha256(source).hexdigest(),
         )

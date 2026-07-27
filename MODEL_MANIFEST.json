@@ -1,23 +1,34 @@
 {
-  "schema_version": 2,
-  "family": "OIMS-Qwen2.5",
+  "schema_version": 3,
+  "family": "OIMS-Heterogeneous-v3",
   "repository": "collectiveos-isomorphic-core",
-  "runtime": "llama-cpp-python",
+  "runtime": "llama-cpp-python>=0.3.34,<0.4",
   "weight_storage": "local-only",
   "shared_contract": "contracts/oims-family.contract.yaml",
+  "diversity_policy": "heterogeneous-architecture-required",
   "models": [
     {
       "name": "ISO-1B",
-      "parameter_class": "1B",
+      "parameter_class": "1.5B",
+      "capacity_class": "edge",
+      "role": "intake",
+      "provider": "Qwen",
+      "architecture_family": "qwen2",
+      "base_model_repo_id": "Qwen/Qwen2.5-1.5B-Instruct",
       "status": "weight-bound",
       "release_surface": "iso-models/iso-1b",
       "repo_id": "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
       "revision": "91cad51170dc346986eccefdc2dd33a9da36ead9",
       "license": "Apache-2.0",
+      "conversion": "official-upstream-gguf",
+      "chat_system_mode": "native",
       "quantization": "Q4_K_M",
-      "download_bytes_approx": 1100000000,
       "files": [
-        "qwen2.5-1.5b-instruct-q4_k_m.gguf"
+        {
+          "filename": "qwen2.5-1.5b-instruct-q4_k_m.gguf",
+          "size": 1117320736,
+          "sha256": "6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e"
+        }
       ],
       "context_length": 4096,
       "gpu_layers": -1
@@ -25,46 +36,61 @@
     {
       "name": "ISO-7B",
       "parameter_class": "7B",
+      "capacity_class": "operator",
+      "role": "operations",
+      "provider": "Mistral AI",
+      "architecture_family": "mistral",
+      "base_model_repo_id": "mistralai/Mistral-7B-Instruct-v0.3",
       "status": "weight-bound",
       "release_surface": "iso-models/iso-7b",
-      "repo_id": "Qwen/Qwen2.5-7B-Instruct-GGUF",
-      "revision": "bb5d59e06d9551d752d08b292a50eb208b07ab1f",
+      "repo_id": "bartowski/Mistral-7B-Instruct-v0.3-GGUF",
+      "revision": "61fd4167fff3ab01ee1cfe0da183fa27a944db48",
       "license": "Apache-2.0",
+      "conversion": "community-gguf-by-bartowski",
+      "chat_system_mode": "prepend-user",
       "quantization": "Q4_K_M",
-      "download_bytes_approx": 4700000000,
       "files": [
-        "qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf",
-        "qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf"
+        {
+          "filename": "Mistral-7B-Instruct-v0.3-Q4_K_M.gguf",
+          "size": 4372812000,
+          "sha256": "1270d22c0fbb3d092fb725d4d96c457b7b687a5f5a715abe1e818da303e562b6"
+        }
       ],
       "context_length": 4096,
       "gpu_layers": -1
     },
     {
       "name": "ISO-30B",
-      "parameter_class": "32B",
+      "parameter_class": "48B-A3B",
+      "capacity_class": "strategist",
+      "role": "strategy",
+      "provider": "Moonshot AI",
+      "architecture_family": "kimi-linear",
+      "base_model_repo_id": "moonshotai/Kimi-Linear-48B-A3B-Instruct",
       "status": "weight-bound",
       "release_surface": "iso-models/iso-30b",
-      "repo_id": "Qwen/Qwen2.5-32B-Instruct-GGUF",
-      "revision": "a15e3cc10f8bbb2c0af6f8f1f34a32e3b060c09d",
-      "license": "Apache-2.0",
-      "quantization": "Q4_K_M",
-      "download_bytes_approx": 19900000000,
+      "repo_id": "bartowski/moonshotai_Kimi-Linear-48B-A3B-Instruct-GGUF",
+      "revision": "228dbe476e5a02091624a19068f4c962caa8a1c5",
+      "license": "MIT",
+      "conversion": "community-imatrix-gguf-by-bartowski",
+      "chat_system_mode": "native",
+      "quantization": "Q3_K_M",
       "files": [
-        "qwen2.5-32b-instruct-q4_k_m-00001-of-00005.gguf",
-        "qwen2.5-32b-instruct-q4_k_m-00002-of-00005.gguf",
-        "qwen2.5-32b-instruct-q4_k_m-00003-of-00005.gguf",
-        "qwen2.5-32b-instruct-q4_k_m-00004-of-00005.gguf",
-        "qwen2.5-32b-instruct-q4_k_m-00005-of-00005.gguf"
+        {
+          "filename": "moonshotai_Kimi-Linear-48B-A3B-Instruct-Q3_K_M.gguf",
+          "size": 22680802720,
+          "sha256": "d63efc0d2824059bb1792e2f023cf3644d44173480530350ddf29cbd17dc146d"
+        }
       ],
-      "context_length": 2048,
-      "gpu_layers": -1
+      "context_length": 4096,
+      "gpu_layers": 20
     }
   ],
   "mesh": {
     "name": "ISO-Mesh",
     "status": "runtime-implemented",
-    "strategy": "sequential-family-conformance",
+    "strategy": "governed-role-routing-and-sequential-conformance",
     "members": ["ISO-1B", "ISO-7B", "ISO-30B"]
   },
-  "conformance": "RUNTIME_INVARIANT_FAMILY"
+  "conformance": "HETEROGENEOUS_RUNTIME_INVARIANT_FAMILY"
 }

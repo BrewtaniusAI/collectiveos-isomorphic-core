@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oims.collective-osp.org/schemas/model-manifest-v3.json",
+  "title": "OIMS heterogeneous model manifest",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "family",
+    "runtime",
+    "shared_contract",
+    "diversity_policy",
+    "models",
+    "mesh"
+  ],
+  "properties": {
+    "schema_version": {"const": 3},
+    "family": {"type": "string", "minLength": 1},
+    "runtime": {"type": "string", "minLength": 1},
+    "shared_contract": {"type": "string", "minLength": 1},
+    "diversity_policy": {"const": "heterogeneous-architecture-required"},
+    "models": {
+      "type": "array",
+      "minItems": 3,
+      "items": {"$ref": "#/$defs/tier"}
+    },
+    "mesh": {
+      "type": "object",
+      "required": ["name", "status", "strategy", "members"],
+      "properties": {
+        "name": {"const": "ISO-Mesh"},
+        "status": {"type": "string"},
+        "strategy": {"type": "string"},
+        "members": {
+          "type": "array",
+          "items": {"type": "string"},
+          "minItems": 3,
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "weightFile": {
+      "type": "object",
+      "required": ["filename", "size", "sha256"],
+      "properties": {
+        "filename": {"type": "string", "pattern": "\\.gguf$"},
+        "size": {"type": "integer", "minimum": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      },
+      "additionalProperties": false
+    },
+    "tier": {
+      "type": "object",
+      "required": [
+        "name",
+        "parameter_class",
+        "capacity_class",
+        "role",
+        "provider",
+        "architecture_family",
+        "base_model_repo_id",
+        "repo_id",
+        "revision",
+        "license",
+        "conversion",
+        "quantization",
+        "files",
+        "context_length",
+        "gpu_layers",
+        "chat_system_mode",
+        "status"
+      ],
+      "properties": {
+        "name": {"type": "string"},
+        "parameter_class": {"type": "string"},
+        "capacity_class": {"type": "string"},
+        "role": {"type": "string"},
+        "provider": {"type": "string"},
+        "architecture_family": {"type": "string"},
+        "base_model_repo_id": {"type": "string"},
+        "repo_id": {"type": "string"},
+        "revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "license": {"type": "string"},
+        "conversion": {"type": "string"},
+        "quantization": {"type": "string"},
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/weightFile"}
+        },
+        "context_length": {"type": "integer", "minimum": 1},
+        "gpu_layers": {"type": "integer", "minimum": -1},
+        "chat_system_mode": {"enum": ["native", "prepend-user"]},
+        "status": {"type": "string"}
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

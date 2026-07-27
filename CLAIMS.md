@@ -1,51 +1,39 @@
 # Claims and Scope
 
-This file defines the repository's primary claims, their operational meaning, supporting evidence, and explicit non-claims.
+## Claim 1: heterogeneous runtime invariance
 
-## Claim 1
-This repository implements a bounded runtime-invariant model-family architecture.
+The repository implements a bounded runtime-invariant family across Qwen2, Mistral, and Kimi
+Linear architectures.
 
-### Operational meaning
-Within this repository, an isomorphic intelligence architecture means a system that:
-- enforces constraint-first execution
-- maintains deterministic governance transitions within the implemented harness
-- validates the same runtime invariant vector across three pinned local-weight tiers
-- produces auditable conformance records
+Operationally, every tier must:
 
-### Evidence
-See:
-- generated `artifacts/conformance_report.jsonld`
-- `run_iso_family.py`
-- `oims/runtime.py`
-- `VERIFICATION.md`
+- enforce the same input-first contract;
+- preserve the same governance order and receipt schema;
+- use a manifest-pinned GGUF whose bytes match an upstream SHA-256;
+- emit a linked, hash-sealed conformance record.
 
-### Non-claim
-This does not claim identical neural weights, identical generated language, intrinsic safety of the
-base models, universal scientific consensus, or independent proof of model-level isomorphism.
+Evidence: `MODEL_MANIFEST.json`, `contracts/`, `oims/runtime.py`, and generated
+`artifacts/conformance_report.jsonld`.
 
-## Claim 2
-ISO-1B, ISO-7B, and ISO-30B share input-first runtime governance.
+Non-claim: this is not proof of identical neural weights, wording, model quality, intrinsic base
+model safety, or universal semantic equivalence.
 
-### Operational meaning
-The execution path validates input before constructing a weight backend, validates output after
-inference, and atomically writes a sealed tier receipt.
+## Claim 2: governed agent role binding
 
-### Evidence
-See:
-- `contracts/oims-family.contract.yaml`
-- `oims/contracts.py`
-- `oims/runtime.py`
+CollectiveOS names resolve to explicit tier and system-role bindings. Activation semantics are
+`role_binding_only`, and every response states `autonomous_worker_claim: false`.
 
-### Non-claim
-This does not imply that base-model internals are governed or that every deployment environment is
-identical. Governance is enforced by the OIMS runtime boundary.
+Evidence: `AGENT_MANIFEST.json`, `oims/agents.py`, `oims/collective.py`, and sealed
+`CollectiveOIMSResponse` artifacts.
 
-## Claim 3
-The repository is designed to be auditable and scrutiny-ready.
+Non-claim: declaring a role does not create an autonomous worker, grant external permissions, or
+prove that a live CollectiveOS service is connected.
 
-### Evidence
-See:
-- `LIMITATIONS.md`
-- `REPO_SCOPE.md`
-- `VERIFICATION.md`
-- `REVIEWER_GUIDE.md`
+## Claim 3: auditable local execution
+
+The repository is designed for implementation-level scrutiny through exact weight identities,
+machine schemas, sealed nested receipts, a fail-closed verifier, tests, and CI.
+
+Evidence: `schemas/`, `oims/verify.py`, `SCOPE_MATRIX.json`, `VERIFICATION.md`, and `tests/`.
+
+Non-claim: hash seals are not signatures and local files are not external WORM storage.

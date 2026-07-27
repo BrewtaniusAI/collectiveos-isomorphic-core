@@ -20,15 +20,33 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
       - name: Install
-        run: python -m pip install -e .
+        run: |
+          python -m pip install -r requirements/ci.lock
+          python -m pip install -e . --no-deps
+      - name: Lint
+        run: |
+          ruff check .
+          ruff format --check .
       - name: Unit and conformance tests
-        run: python -m unittest discover -v
+        run: |
+          python -m unittest discover -v
+          pytest -q
       - name: Fixture family smoke
         run: >-
           python -m oims
           --artifacts-dir artifacts-smoke
-          family
+          mesh
           --backend fixture
-          --prompt "CI family conformance probe"
-      - name: Validate emitted JSON
-        run: python -m json.tool artifacts-smoke/conformance_report.jsonld > /dev/null
+          --prompt "CI heterogeneous family conformance probe"
+      - name: Verify family receipt
+        run: python -m oims verify --path artifacts-smoke/conformance_report.jsonld
+      - name: CollectiveOS role smoke
+        run: >-
+          python -m oims
+          --artifacts-dir artifacts-smoke
+          collective
+          --backend fixture
+          --agent Giles
+          --prompt "CI role-binding probe"
+      - name: Validate machine-readable scope
+        run: python -m json.tool SCOPE_MATRIX.json > /dev/null

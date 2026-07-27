@@ -14,6 +14,7 @@ class ContractTests(unittest.TestCase):
         self.assertTrue(decision.lawful)
         self.assertTrue(decision.should_execute)
         self.assertEqual("LAWFUL", decision.status)
+        self.assertEqual(("QC", "GATA", "GATA_PRIME"), self.contract.governance_workflow)
 
     def test_empty_input_is_idle_without_execution(self) -> None:
         decision = validate_input("   ", self.contract)

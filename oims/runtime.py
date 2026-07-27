@@ -53,22 +53,28 @@ def _base_record(
             "invalid_input_type": f"{prompt_type.__module__}.{prompt_type.__qualname__}"
         }
     return {
-        "@context": "https://oims.collective-osp.org/conformance/v2",
+        "@context": "https://oims.collective-osp.org/conformance/v3",
         "@type": "OIMSModelTierConformanceRecord",
-        "schema_version": 2,
+        "schema_version": 3,
         "created_at": utc_now(),
         "family": manifest.family,
         "model": spec.name,
         "parameter_class": spec.parameter_class,
+        "capacity_class": spec.capacity_class,
+        "declared_role": spec.role,
+        "provider": spec.provider,
+        "architecture_family": spec.architecture_family,
         "prompt_sha256": sha256_value(prompt_evidence),
         "contract_version": contract.version,
         "contract_hash": contract.source_hash,
         "weight_source": {
             "repo_id": spec.repo_id,
+            "base_model_repo_id": spec.base_model_repo_id,
             "revision": spec.revision,
             "quantization": spec.quantization,
             "license": spec.license,
-            "files": list(spec.files),
+            "conversion": spec.conversion,
+            "files": [item.to_mapping() for item in spec.weight_files],
         },
         "source_commit": current_git_commit(ROOT),
     }
@@ -82,8 +88,12 @@ def _invariant_vector(
         "contract_hash": contract.source_hash,
         "contract_version": contract.version,
         "family": manifest.family,
-        "governance_order": "preflight->inference->output-validation->receipt",
-        "response_schema": "OIMSModelTierConformanceRecord/v2",
+        "governance_order": (
+            f"{contract.governance_workflow[0]}-preflight->inference->"
+            f"{contract.governance_workflow[1]}-output-validation->"
+            f"{contract.governance_workflow[2]}-receipt"
+        ),
+        "response_schema": "OIMSModelTierConformanceRecord/v3",
     }
 
 
@@ -106,6 +116,7 @@ def run_tier(
     weights_dir: Path = DEFAULT_WEIGHTS_DIR,
     artifacts_dir: Path = DEFAULT_ARTIFACTS_DIR,
     max_tokens: int = 256,
+    agent_binding: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     manifest = manifest or load_manifest()
     contract = contract or load_contract(ROOT / manifest.shared_contract)
@@ -123,6 +134,10 @@ def run_tier(
         "lawful": input_decision.lawful,
     }
     record["invariant_vector"] = _invariant_vector(manifest, contract)
+    if agent_binding is not None:
+        if agent_binding.get("tier") != spec.name:
+            raise ValueError("agent binding tier does not match selected runtime tier")
+        record["agent_binding"] = agent_binding
 
     if not input_decision.should_execute:
         record.update(
@@ -145,7 +160,12 @@ def run_tier(
         backend = factory(spec)
         result = backend.generate(str(prompt), max_tokens=max_tokens)
         output_decision = validate_output(result.output, contract)
-        weight_status = inspect_tier(spec, weights_dir, compute_hashes=False)
+        verified_inventory = result.metadata.get("verified_weight_inventory")
+        weight_status = (
+            verified_inventory
+            if isinstance(verified_inventory, dict)
+            else inspect_tier(spec, weights_dir, compute_hashes=False)
+        )
         if result.metadata.get("weight_hash_verified", False):
             weight_status["hash_verified"] = True
             weight_status["verification"] = "sha256-revalidated-before-load"
@@ -154,7 +174,9 @@ def run_tier(
                 "status": output_decision.status,
                 "lawful": output_decision.lawful,
                 "weight_execution_verified": bool(
-                    result.real_weights and result.metadata.get("weight_hash_verified", False)
+                    result.real_weights
+                    and result.metadata.get("weight_hash_verified", False)
+                    and result.metadata.get("upstream_identity_verified", False)
                 ),
                 "runtime_drift": 0.0 if output_decision.lawful else 1.0,
                 "output": result.output if output_decision.lawful else output_decision.message,
@@ -234,17 +256,25 @@ def run_family(
     drift = _runtime_drift(records)
     lawful = all(record["status"] == "LAWFUL" for record in records)
     weight_backed = all(record["weight_execution_verified"] for record in records)
+    architectures = [record["architecture_family"] for record in records]
+    providers = [record["provider"] for record in records]
+    diversity_verified = len(set(architectures)) == len(records) and len(set(providers)) == len(
+        records
+    )
+    conformant = lawful and drift <= contract.max_runtime_drift and diversity_verified
     report = {
-        "@context": "https://oims.collective-osp.org/conformance/v2",
+        "@context": "https://oims.collective-osp.org/conformance/v3",
         "@type": "OIMSFamilyConformanceReport",
-        "schema_version": 2,
+        "schema_version": 3,
         "created_at": utc_now(),
         "family": manifest.family,
+        "mesh": manifest.mesh.to_mapping(),
         "executed_tiers": [record["model"] for record in records],
-        "status": "CONFORMANT"
-        if lawful and drift <= contract.max_runtime_drift
-        else "NONCONFORMANT",
-        "runtime_isomorphic": lawful and drift <= contract.max_runtime_drift,
+        "executed_architectures": architectures,
+        "executed_providers": providers,
+        "heterogeneous_architectures_verified": diversity_verified,
+        "status": "CONFORMANT" if conformant else "NONCONFORMANT",
+        "runtime_isomorphic": conformant,
         "weight_execution_verified": weight_backed,
         "evidence_class": "WEIGHT_BACKED" if weight_backed else "TEST_OR_INCOMPLETE",
         "runtime_drift": drift,

@@ -7,6 +7,7 @@ from pathlib import Path
 
 from oims.proof import verify_sealed_record
 from oims.runtime import fixture_backend_factory, run_family, run_tier
+from oims.verify import verify_artifact
 
 
 class RuntimeTests(unittest.TestCase):
@@ -22,7 +23,13 @@ class RuntimeTests(unittest.TestCase):
             self.assertFalse(report["weight_execution_verified"])
             self.assertEqual("TEST_OR_INCOMPLETE", report["evidence_class"])
             self.assertEqual(["ISO-1B", "ISO-7B", "ISO-30B"], report["executed_tiers"])
+            self.assertEqual(
+                ["qwen2", "mistral", "kimi-linear"],
+                report["executed_architectures"],
+            )
+            self.assertTrue(report["heterogeneous_architectures_verified"])
             self.assertTrue(verify_sealed_record(report))
+            self.assertTrue(verify_artifact(report)["valid"])
             saved = json.loads(
                 (Path(directory) / "conformance_report.jsonld").read_text(encoding="utf-8")
             )

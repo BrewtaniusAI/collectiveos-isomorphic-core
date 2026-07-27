@@ -1,15 +1,15 @@
 # Known Gaps
 
-This file lists the remaining known gaps between the current repository state and a full public model-family release.
+The in-repository 0.3.0 surfaces are implemented. Remaining gates require hardware, external
+authority, independent evaluation, or an owner decision:
 
-## Current gaps
-- OIMS does not redistribute model weights; pinned Apache-2.0 GGUF files are downloaded locally
-- Reproducible base-model training recipes are upstream Qwen artifacts, not OIMS artifacts
-- Independent semantic-equivalence benchmarks across tiers are not yet included
-- CUDA execution depends on a compatible local llama-cpp-python build
-- Proof receipts are hash-sealed but are not yet signed or written to external WORM storage
-- The OIMS-authored source code still requires the owner's intended license
+- execute all 28,170,935,456 bytes on the target RTX 4090 workstation;
+- produce and verify a `WEIGHT_BACKED` heterogeneous family receipt;
+- select the intended license for OIMS-authored source;
+- configure signing identity and an external Proof Vault/WORM destination;
+- commission an independent semantic-equivalence and adversarial evaluation;
+- deploy the local CollectiveOS envelope behind the intended service/process boundary;
+- design distributed node identity, transport, scheduling, and failure semantics for a later mesh.
 
-## Interpretation
-These gaps bound the current claim to runtime-invariant conformance. They must be closed before
-claiming independent model-level proof or a formal source release.
+These gaps prohibit stronger release claims but do not invalidate the implemented local runtime,
+role-binding, or conformance surfaces.

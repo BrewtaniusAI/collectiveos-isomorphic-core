@@ -1,7 +1,9 @@
 {
   "model": "ISO-1B",
   "type": "weight-backed-runtime-tier",
-  "base_model": "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
+  "base_model": "Qwen/Qwen2.5-1.5B-Instruct",
+  "architecture_family": "qwen2",
+  "role": "intake",
   "manifest": "../../MODEL_MANIFEST.json",
   "constraints": {
     "max_runtime_drift": 0.05,

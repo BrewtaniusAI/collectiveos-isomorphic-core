@@ -1,41 +1,40 @@
 # Verification
 
-## Verified automatically
-
-- model repositories, GGUF filenames, and immutable revisions are manifest-pinned;
-- invalid inputs collapse or idle before backend construction;
-- all tiers use the same contract hash, governance order, and receipt schema;
-- records are written atomically and sealed with SHA-256;
-- record tampering is detected;
-- fixture evidence cannot be labeled as weight-backed;
-- missing local weight files are reported per tier.
-
-Run:
+## Automated code/fixture verification
 
 ```bash
 python -m unittest discover -v
+python -m oims --artifacts-dir artifacts-smoke mesh \
+  --backend fixture \
+  --prompt "heterogeneous fixture probe"
+python -m oims verify --path artifacts-smoke/conformance_report.jsonld
 ```
 
-## Verified on a target GPU
+This verifies manifest diversity, exact expected weight identities, input-first governance,
+agent-role bindings, CollectiveOS linkage, receipt seals, nested tier hashes, and fixture evidence
+classification. It cannot claim that real weights executed.
 
-A complete local run must execute:
+## Target workstation acceptance
 
-```bash
+```powershell
 python -m oims weights check --tier all --full-hash
-python -m oims family --prompt "family conformance probe"
+python -m oims mesh --prompt "heterogeneous family acceptance probe"
+python -m oims verify `
+  --path artifacts/conformance_report.jsonld `
+  --require-weight-backed
 ```
 
-The resulting family report must state:
+The accepted family report must contain:
 
 ```json
 {
+  "executed_architectures": ["qwen2", "mistral", "kimi-linear"],
+  "heterogeneous_architectures_verified": true,
   "runtime_isomorphic": true,
   "weight_execution_verified": true,
   "evidence_class": "WEIGHT_BACKED"
 }
 ```
 
-## Boundary
-
-Runtime-invariant conformance does not prove identical neural weights, identical wording,
-base-model safety, or universal semantic equivalence.
+This proves the bounded runtime invariant and physical execution of the pinned bytes. It does not
+prove semantic identity or independent model quality.
