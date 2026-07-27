@@ -1,27 +1,21 @@
 # Showcase
 
-## What exists
-- Executable ISO-1B organism
-- Root-level runner (`run_iso_family.py`)
-- Conformance artifacts
-- Runtime governance via contracts
-- Provenance scaffolding
+## Live path
 
-## What this demonstrates
-- Constraint-bound execution
-- Deterministic behavior within defined conditions
-- Drift-bounded outputs
-- Collapse on violation
+```bash
+python -m oims weights pull --tier all
+python -m oims family --prompt "Explain constraint-first execution."
+```
 
-## What this does NOT claim
-- Full frontier-scale model release
-- Complete distribution of all tiers
+The runner:
 
-## How to evaluate
-1. Run the system
-2. Inspect output
-3. Inspect conformance artifacts
-4. Cross-check with claims and limitations
+1. validates input before inference;
+2. loads ISO-1B from pinned local GGUF files;
+3. validates and seals its receipt;
+4. releases the model;
+5. repeats for ISO-7B and ISO-30B;
+6. compares the shared invariant vectors;
+7. seals the family report.
 
-## Interpretation
-This repository is a proof-of-invariant surface, not a complete model-family release.
+The review target is `artifacts/conformance_report.jsonld`. A valid live demonstration requires
+`evidence_class: WEIGHT_BACKED`.

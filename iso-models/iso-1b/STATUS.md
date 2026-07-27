@@ -1,14 +1,6 @@
 # ISO-1B Status
 
-## Phase
-Executable reference organism.
+Runtime binding: implemented.
 
-## Capabilities
-- deterministic execution within constraints
-- runtime contract enforcement
-- conformance artifact generation
-- provenance scaffolding
-
-## Limitations
-- minimal capability by design
-- not a full model release
+Weight execution is complete only after the pinned 1.1 GB GGUF file is present locally and a
+conformance receipt reports `weight_execution_verified: true`.

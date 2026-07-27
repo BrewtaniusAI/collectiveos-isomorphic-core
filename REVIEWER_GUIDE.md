@@ -1,31 +1,17 @@
 # Reviewer Guide
 
-This guide is for technical reviewers and skeptics who want the fastest path to evaluate the repository.
+## Fast path
 
-## Start here
-1. Read `REPO_SCOPE.md`
-2. Read `LIMITATIONS.md`
-3. Read `VERIFICATION.md`
+1. Inspect `MODEL_MANIFEST.json` for exact upstream revisions and GGUF files.
+2. Inspect `contracts/oims-family.contract.yaml`.
+3. Run `python -m unittest discover -v`.
+4. Run the fixture family command in `QUICKSTART.md`.
+5. On target hardware, download and hash all weights.
+6. Run the real family.
+7. Verify `artifacts/conformance_report.jsonld` says `WEIGHT_BACKED`.
 
-## Run the system
-```bash
-python run_iso_family.py
-```
+## Evaluation boundary
 
-## Inspect outputs
-- `iso-models/iso-1b/conformance_record.jsonld`
-- `conformance_report.jsonld`
-
-## Inspect claims and boundaries
-- `CLAIMS.md`
-- `TERMS.md`
-- `HARDENING.md`
-- `KNOWN_GAPS.md`
-
-## Evaluation principle
-Evaluate this repository as:
-- a standard and implementation surface
-- a proof-of-invariant surface
-- a bounded executable reference organism
-
-Do not evaluate it as if it already claims a complete public model-family release.
+Evaluate the repository as a multi-tier runtime-invariant implementation. Do not treat fixture
+receipts, documentation, or a zero-drift wrapper vector as proof of semantic identity between
+neural models.

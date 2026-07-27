@@ -1,21 +1,12 @@
 # Limitations
 
-This document explicitly states the boundaries of what is implemented and what is not.
-
-## Not a full model release
-This repository does not include:
-- full public weights for all model tiers
-- tokenizer assets for all tiers
-- complete training pipelines for all tiers
-
-## Not universal proof
-Conformance artifacts demonstrate behavior within the implemented surface.
-They do not constitute universal proofs for all possible inputs or environments.
-
-## Scope-bound execution
-The ISO-1B organism surface is intentionally minimal and constraint-bound.
-It is designed as a proof-of-invariant, not a frontier-scale model.
-
-## External context
-Broader claims and theoretical framing may rely on external publications.
-This repository separates what is directly implemented from what is external context.
+- Model weights are downloaded from pinned upstream Qwen repositories and are not redistributed.
+- The ISO-30B capacity tier currently binds a 32B-class model.
+- CUDA execution requires a compatible local llama.cpp build.
+- A 24 GB GPU may require a 2,048-token context or partial CPU offload for ISO-30B.
+- Runtime governance wraps model inference; it does not alter or formally verify every internal
+  neural computation.
+- Runtime-invariant conformance is not semantic identity or universal scientific proof.
+- Hash-sealed receipts are tamper-evident files, not yet signed or externally WORM-anchored.
+- Training data, base-model training, and tokenizer construction are upstream Qwen concerns.
+- The OIMS-authored source code does not yet declare the owner's intended license.

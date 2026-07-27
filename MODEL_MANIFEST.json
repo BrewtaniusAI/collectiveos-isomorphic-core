@@ -1,11 +1,70 @@
 {
-  "family": "OIMS",
+  "schema_version": 2,
+  "family": "OIMS-Qwen2.5",
   "repository": "collectiveos-isomorphic-core",
+  "runtime": "llama-cpp-python",
+  "weight_storage": "local-only",
+  "shared_contract": "contracts/oims-family.contract.yaml",
   "models": [
-    {"name": "ISO-1B", "status": "implemented", "release_surface": "iso-models/iso-1b"},
-    {"name": "ISO-7B", "status": "specified", "release_surface": "iso-models/iso-7b"},
-    {"name": "ISO-30B", "status": "specified", "release_surface": "iso-models/iso-30b"},
-    {"name": "ISO-Mesh", "status": "specified", "release_surface": "iso-models/iso-mesh"}
+    {
+      "name": "ISO-1B",
+      "parameter_class": "1B",
+      "status": "weight-bound",
+      "release_surface": "iso-models/iso-1b",
+      "repo_id": "Qwen/Qwen2.5-1.5B-Instruct-GGUF",
+      "revision": "91cad51170dc346986eccefdc2dd33a9da36ead9",
+      "license": "Apache-2.0",
+      "quantization": "Q4_K_M",
+      "download_bytes_approx": 1100000000,
+      "files": [
+        "qwen2.5-1.5b-instruct-q4_k_m.gguf"
+      ],
+      "context_length": 4096,
+      "gpu_layers": -1
+    },
+    {
+      "name": "ISO-7B",
+      "parameter_class": "7B",
+      "status": "weight-bound",
+      "release_surface": "iso-models/iso-7b",
+      "repo_id": "Qwen/Qwen2.5-7B-Instruct-GGUF",
+      "revision": "bb5d59e06d9551d752d08b292a50eb208b07ab1f",
+      "license": "Apache-2.0",
+      "quantization": "Q4_K_M",
+      "download_bytes_approx": 4700000000,
+      "files": [
+        "qwen2.5-7b-instruct-q4_k_m-00001-of-00002.gguf",
+        "qwen2.5-7b-instruct-q4_k_m-00002-of-00002.gguf"
+      ],
+      "context_length": 4096,
+      "gpu_layers": -1
+    },
+    {
+      "name": "ISO-30B",
+      "parameter_class": "32B",
+      "status": "weight-bound",
+      "release_surface": "iso-models/iso-30b",
+      "repo_id": "Qwen/Qwen2.5-32B-Instruct-GGUF",
+      "revision": "a15e3cc10f8bbb2c0af6f8f1f34a32e3b060c09d",
+      "license": "Apache-2.0",
+      "quantization": "Q4_K_M",
+      "download_bytes_approx": 19900000000,
+      "files": [
+        "qwen2.5-32b-instruct-q4_k_m-00001-of-00005.gguf",
+        "qwen2.5-32b-instruct-q4_k_m-00002-of-00005.gguf",
+        "qwen2.5-32b-instruct-q4_k_m-00003-of-00005.gguf",
+        "qwen2.5-32b-instruct-q4_k_m-00004-of-00005.gguf",
+        "qwen2.5-32b-instruct-q4_k_m-00005-of-00005.gguf"
+      ],
+      "context_length": 2048,
+      "gpu_layers": -1
+    }
   ],
-  "conformance": "ISOMORPHIC_FAMILY"
+  "mesh": {
+    "name": "ISO-Mesh",
+    "status": "runtime-implemented",
+    "strategy": "sequential-family-conformance",
+    "members": ["ISO-1B", "ISO-7B", "ISO-30B"]
+  },
+  "conformance": "RUNTIME_INVARIANT_FAMILY"
 }

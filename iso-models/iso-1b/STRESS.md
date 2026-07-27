@@ -1,25 +1,20 @@
-# Stress Tests
-
-This document describes basic stress validation for ISO-1B.
-
-## Purpose
-
-To verify that the system:
-- handles edge cases
-- maintains lawful output
-- collapses or bounds behavior under constraint violations
-
-## How to run
+# Stress and Contract Tests
 
 ```bash
-python -m iso-models.iso-1b.stress_tests
+python -m unittest discover -v
 ```
 
-## Initial cases
-- empty input
-- normal input
+The assertive suite covers:
 
-## Future cases
-- forced violation
-- drift escalation
-- adversarial prompts
+- normal input;
+- empty-input idle;
+- non-string collapse before backend construction;
+- maximum-length boundary;
+- empty model-output collapse;
+- manifest pinning;
+- all-tier invariant comparison;
+- fixture/weight evidence separation;
+- receipt tamper detection;
+- missing weight inventory.
+
+Adversarial semantic and long-duration GPU evaluations remain separate target-hardware work.
