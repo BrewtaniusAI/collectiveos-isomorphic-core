@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oims.collective-osp.org/schemas/family-conformance-v3.json",
+  "title": "OIMS heterogeneous family conformance report",
+  "type": "object",
+  "required": [
+    "@context",
+    "@type",
+    "schema_version",
+    "family",
+    "mesh",
+    "executed_tiers",
+    "executed_architectures",
+    "executed_providers",
+    "heterogeneous_architectures_verified",
+    "status",
+    "runtime_isomorphic",
+    "weight_execution_verified",
+    "evidence_class",
+    "tier_record_hashes",
+    "results",
+    "record_sha256"
+  ],
+  "properties": {
+    "@type": {"const": "OIMSFamilyConformanceReport"},
+    "schema_version": {"const": 3},
+    "family": {"type": "string"},
+    "mesh": {"type": "object"},
+    "executed_tiers": {"type": "array", "items": {"type": "string"}},
+    "executed_architectures": {"type": "array", "items": {"type": "string"}},
+    "executed_providers": {"type": "array", "items": {"type": "string"}},
+    "heterogeneous_architectures_verified": {"type": "boolean"},
+    "status": {"enum": ["CONFORMANT", "NONCONFORMANT"]},
+    "runtime_isomorphic": {"type": "boolean"},
+    "weight_execution_verified": {"type": "boolean"},
+    "evidence_class": {"enum": ["WEIGHT_BACKED", "TEST_OR_INCOMPLETE"]},
+    "tier_record_hashes": {"type": "object"},
+    "results": {
+      "type": "array",
+      "items": {"$ref": "tier-conformance.schema.json"}
+    },
+    "record_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "additionalProperties": true
+}

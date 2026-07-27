@@ -1,21 +1,39 @@
 # Terms
 
-This document defines key terms used within the repository.
+## Runtime isomorphism
 
-## Isomorphic Intelligence
-A system where behavioral identity is preserved across different scales or implementations.
+Preservation of the declared contract, governance order, lawful transitions, and receipt schema
+across different implemented model substrates.
 
-## Constraint-First Execution
-A design principle where outputs are bounded by constraints before being emitted.
+## Heterogeneous family
 
-## Conformance Artifact
-A structured record describing the outcome of a system execution.
+A family whose tiers use distinct upstream providers and architecture families. Here: Qwen2,
+Mistral, and Kimi Linear.
 
-## Runtime Governance
-The application of constraints during execution, not only after.
+## Constraint-first execution
 
-## Provenance
-Structured explanation of why a result is valid, including constraint signals and verification context.
+Validation that occurs before a model backend is constructed or invoked.
+
+## Agent role binding
+
+An explicit mapping from a named interaction role to a tier and system prompt. A role binding is
+not an autonomous worker, permission grant, or external actuation authority.
+
+## ISO-Mesh
+
+The governed coordination surface. Version 0.3.0 implements role routing and sequential local
+family conformance, not distributed multi-node inference.
+
+## CollectiveOS bridge
+
+A sealed JSON request/response boundary that resolves declared roles and links the response to a
+tier receipt.
+
+## Conformance artifact
+
+A structured, hash-sealed record of an execution and its evidence.
 
 ## Proof Vault
-A conceptual structure for storing verifiable execution records and lineage metadata.
+
+An external storage/authority concept for signed and immutable lineage. Local hash seals prepare
+records for a Proof Vault but do not claim that WORM anchoring occurred.

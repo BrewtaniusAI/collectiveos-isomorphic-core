@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oims.collective-osp.org/schemas/collective-request-v1.json",
+  "title": "CollectiveOS OIMS request envelope",
+  "type": "object",
+  "required": ["prompt"],
+  "properties": {
+    "request_id": {"type": "string", "minLength": 1},
+    "agent": {"type": "string", "minLength": 1},
+    "prompt": {"type": "string"},
+    "max_tokens": {"type": "integer", "minimum": 1, "maximum": 4096}
+  },
+  "additionalProperties": false
+}

@@ -1,37 +1,66 @@
 # CollectiveOS Isomorphic Core
 
-One governed runtime contract. Three real local-weight tiers. Auditable family receipts.
+One governed contract. Three different model architectures. Explicit CollectiveOS role bindings.
 
-CollectiveOS Isomorphic Core is the implementation surface for the Open Isomorphic Model
-Standard (OIMS). It binds three instruction-model weight classes to one input-first governance
-contract and one conformance-record schema:
+CollectiveOS Isomorphic Core implements a bounded heterogeneous model family for the Open
+Isomorphic Model Standard (OIMS). The family deliberately uses different upstream providers and
+architectures so conformance is tested across substrates rather than across sizes of one model
+line.
 
-| OIMS tier | Bound model | Quantization | Download |
-| --- | --- | --- | ---: |
-| ISO-1B | Qwen2.5-1.5B-Instruct | Q4_K_M GGUF | 1.1 GB |
-| ISO-7B | Qwen2.5-7B-Instruct | Q4_K_M GGUF | 4.7 GB |
-| ISO-30B | Qwen2.5-32B-Instruct | Q4_K_M GGUF | 19.9 GB |
+| OIMS tier | Local binding | Architecture | Agent role | Quantization | Exact bytes |
+| --- | --- | --- | --- | --- | ---: |
+| ISO-1B | Qwen2.5-1.5B-Instruct | Qwen2 | intake/edge | Q4_K_M | 1,117,320,736 |
+| ISO-7B | Mistral-7B-Instruct-v0.3 | Mistral | operator | Q4_K_M | 4,372,812,000 |
+| ISO-30B | Kimi-Linear-48B-A3B-Instruct | Kimi Linear | strategist | Q3_K_M | 22,680,802,720 |
 
-The model repositories are official Qwen GGUF releases under Apache-2.0. Every tier is pinned to
-an immutable Hugging Face commit in `MODEL_MANIFEST.json`. Weight files stay local and are never
-committed to Git.
+The ISO-30B name remains the large OIMS capacity class. Its heterogeneous reference binding is
+Kimi Linear 48B total / 3B active. The exact local family download is 28,170,935,456 bytes.
 
-## What runs
+## Evidence boundary
 
-- real GGUF inference through `llama-cpp-python`;
-- all three tiers sequentially, so only one model occupies GPU memory at a time;
-- pre-inference input governance;
-- post-inference output validation;
-- per-tier sealed JSON-LD receipts;
-- a family conformance report that compares runtime invariants;
-- cryptographic hashes for contracts, prompts, outputs, records, and downloaded weight files;
-- mandatory weight-lock revalidation before every real model load;
-- deterministic fixtures for CI that are always labeled as non-weight evidence.
+OIMS runtime isomorphism means every tier preserves the same contract hash, governance order,
+receipt schema, and lawful transition rules. The report also proves that the executed tiers came
+from three declared architecture families.
 
-The ISO-30B name is retained as the OIMS capacity class. Its current weight binding is the
-32.5-billion-parameter Qwen2.5-32B model.
+It does not mean the models have identical weights or wording, and it is not independent proof of
+semantic equivalence. Fixture runs validate mechanics only. A `WEIGHT_BACKED` report requires all
+three pinned GGUF files to be hash-verified and executed locally.
 
-## Quick start
+## CollectiveOS roles
+
+`AGENT_MANIFEST.json` binds local roles to tiers:
+
+| Collective role | Default tier |
+| --- | --- |
+| SYN Edge | ISO-1B |
+| Rabbit Ops, Max Device, Muse Creative | ISO-7B |
+| Giles Strategist, Cypher Analyst, Lock Security | ISO-30B |
+
+These are explicit `role_binding_only` profiles. The repository makes no autonomous-worker claim.
+Collective responses declare the governance route `QC -> GATA -> GATA_PRIME`.
+
+List bindings:
+
+```bash
+python -m oims agents
+```
+
+Run one CollectiveOS role:
+
+```bash
+python -m oims collective \
+  --agent Giles \
+  --prompt "Create a bounded implementation strategy."
+```
+
+The response is emitted as a sealed `CollectiveOIMSResponse` envelope linked to the tier receipt.
+File-based requests use `schemas/collective-request.schema.json`:
+
+```bash
+python -m oims collective --request-file examples/collective-request.json
+```
+
+## Install
 
 Python 3.10 or newer is required.
 
@@ -42,107 +71,82 @@ python -m pip install --upgrade pip
 python -m pip install -e ".[weights]"
 ```
 
-Install a CUDA-enabled `llama-cpp-python` build for NVIDIA GPU offload before running the 7B or
-32B tier. Platform-specific instructions are in `WEIGHTS.md`.
+Install a CUDA-enabled `llama-cpp-python>=0.3.34,<0.4`. Current installation options and the
+Windows/RTX 4090 path are in `WEIGHTS.md`.
 
-Check the machine:
-
-```bash
-python -m oims doctor
-```
-
-Download and hash all 25.7 GB of pinned weights:
+## Download and run the whole family
 
 ```powershell
 .\scripts\download_weights.ps1 -Tier all
+python -m oims doctor
+.\scripts\run_all_weights.ps1 -Prompt "Explain the shared OIMS contract."
 ```
 
-Run every tier sequentially:
-
-```powershell
-.\scripts\run_all_weights.ps1 -Prompt "Explain the OIMS runtime contract."
-```
-
-Equivalent Python commands:
+Equivalent commands:
 
 ```bash
 python -m oims weights pull --tier all
-python -m oims weights check --tier all
-python -m oims family --prompt "Explain the OIMS runtime contract."
+python -m oims weights check --tier all --full-hash
+python -m oims mesh --prompt "Explain the shared OIMS contract."
+python -m oims verify \
+  --path artifacts/conformance_report.jsonld \
+  --require-weight-backed
 ```
 
-Run one tier:
+Models load sequentially. ISO-1B and ISO-7B default to full GPU offload. Kimi defaults to 20 GPU
+layers and uses system RAM for the remainder, which is the safer starting point for a 24 GB GPU.
 
-```bash
-python -m oims run --tier ISO-7B --prompt "Give a bounded systems analysis."
+## ISO-Mesh
+
+`oims mesh` is the explicit mesh surface. It currently provides governed role routing plus
+sequential family conformance. Distributed multi-node inference is outside this release.
+
+```text
+validate input
+  -> resolve exact pinned weight identity
+  -> execute Qwen intake tier
+  -> release backend
+  -> execute Mistral operator tier
+  -> release backend
+  -> execute Kimi strategist tier
+  -> compare shared runtime invariants
+  -> seal and verify family report
 ```
 
-Artifacts are written under `artifacts/`:
+## Artifacts
 
 ```text
 artifacts/
 ├── iso-1b-conformance.jsonld
 ├── iso-7b-conformance.jsonld
 ├── iso-30b-conformance.jsonld
-└── conformance_report.jsonld
+├── conformance_report.jsonld
+└── collective-<request-hash>.jsonld
 ```
 
-## Runtime sequence
-
-```text
-validate input
-  → resolve pinned local weights
-  → run one tier
-  → validate output
-  → seal tier receipt
-  → release model memory
-  → run next tier
-  → compare invariant vectors
-  → seal family report
-```
-
-Input validation happens before the weight backend is constructed. Wrong input types and
-over-length inputs therefore cannot reach model inference.
-
-## Verification
-
-Run the dependency-light test suite:
-
-```bash
-python -m unittest discover -v
-python -m oims --artifacts-dir artifacts-smoke family \
-  --backend fixture \
-  --prompt "fixture conformance probe"
-```
-
-Fixture output validates governance and receipt mechanics only. A report is labeled
-`WEIGHT_BACKED` only when every tier was executed by the real local-weight backend.
-
-## What runtime isomorphism means here
-
-OIMS runtime isomorphism is a bounded engineering claim: every tier must preserve the same
-contract hash, contract version, family identity, governance order, and response schema. Runtime
-drift is the mismatch ratio across that invariant vector.
-
-It does **not** mean that the three neural networks have identical weights, produce identical
-wording, or constitute universal scientific proof. Model-quality and semantic-equivalence
-benchmarks remain separate work.
+Standalone JSON Schemas live in `schemas/`. `python -m oims verify` checks seals, nested hash
+links, manifest identity, contract identity, tier completeness, architecture diversity, agent
+bindings, and evidence-class consistency.
 
 ## Repository map
 
-- `oims/` — package runtime, backends, contracts, receipts, and weight management
-- `contracts/oims-family.contract.yaml` — shared family contract
-- `MODEL_MANIFEST.json` — pinned model and file manifest
-- `tests/` — assertive governance, manifest, receipt, and family tests
-- `.github/workflows/ci.yml` — Python 3.10/3.12 CI
-- `iso-models/` — tier-level release documentation
-- `WEIGHTS.md` — download, hardware, CUDA, and troubleshooting guide
-- `CLAIMS.md` / `LIMITATIONS.md` — precise evidence boundaries
+- `oims/` — runtime, agents, CollectiveOS bridge, receipts, verification, and weight management
+- `MODEL_MANIFEST.json` — heterogeneous model bindings and exact upstream weight identities
+- `AGENT_MANIFEST.json` — explicit CollectiveOS role bindings
+- `COLLECTIVE_INTEGRATION.md` — request/response and deployment boundary
+- `contracts/` — shared runtime contract
+- `schemas/` — machine-readable manifests and receipt schemas
+- `SCOPE_MATRIX.json` — machine-readable completeness ledger
+- `requirements/` / `SBOM.spdx.json` — dependency locks and source SBOM
+- `SECURITY.md` / `CONTRIBUTING.md` — trust boundaries and contribution gates
+- `tests/` — assertive governance, provenance, role-binding, and receipt tests
+- `iso-models/` — tier and mesh release surfaces
 
 ## License boundary
 
-The bound Qwen2.5 GGUF weights declare Apache-2.0. This repository does not currently declare a
-license for the OIMS-authored source code; public visibility alone does not grant reuse rights.
-Add the project’s intended custom license before a formal source release.
+The bound model licenses are recorded per tier: Apache-2.0 for Qwen and Mistral; MIT for Kimi
+Linear. Community GGUF conversion provenance is explicit in the manifest. OIMS-authored source
+still has no declared license; public visibility alone does not grant reuse rights. The owner must
+select the intended source license before a formal source release.
 
 Associated theoretical context: <https://doi.org/10.5281/zenodo.19477170>

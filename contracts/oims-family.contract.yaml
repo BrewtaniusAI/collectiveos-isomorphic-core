@@ -1,5 +1,5 @@
-family: OIMS-Qwen2.5
-version: "2.0"
+family: OIMS-Heterogeneous-v3
+version: "3.0"
 preconditions:
   input_must_be_string: true
   input_max_length: 2048
@@ -11,13 +11,22 @@ invariants:
   max_runtime_drift: 0.05
   require_nonempty_output: true
   require_pinned_weight_revision: true
+  require_expected_weight_sha256: true
   require_shared_contract_hash: true
+  require_heterogeneous_architectures: true
+  require_declared_agent_profiles: true
 governance:
+  workflow:
+    - QC
+    - GATA
+    - GATA_PRIME
   hard_fail:
     - input_not_string
     - input_too_long
     - empty_model_output
     - unpinned_weight_revision
+    - unexpected_weight_hash
+    - invalid_agent_binding
   soft_warn:
     - empty_input
 recovery:

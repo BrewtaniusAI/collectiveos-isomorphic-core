@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "collectiveos-isomorphic-core"
-version = "0.2.0"
-description = "A governed, multi-tier local-weight runtime for the Open Isomorphic Model Standard"
+version = "0.3.0"
+description = "A governed heterogeneous local-weight agent family for CollectiveOS"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [{ name = "Mark Anthony Brewer" }]
@@ -18,7 +18,7 @@ weights = [
   "huggingface-hub>=0.27,<2",
 ]
 cpu = [
-  "llama-cpp-python>=0.3.2,<1",
+  "llama-cpp-python>=0.3.34,<0.4",
 ]
 dev = [
   "pytest>=8,<10",

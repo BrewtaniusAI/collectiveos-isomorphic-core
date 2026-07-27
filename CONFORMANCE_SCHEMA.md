@@ -1,23 +1,26 @@
-# Conformance Schema
+# Conformance Schemas
 
-Tier records use `OIMSModelTierConformanceRecord` version 2 and contain:
+Authoritative JSON Schemas:
 
-- tier, parameter class, and pinned weight source;
-- prompt, contract, output, source commit, and sealed-record hashes;
-- preflight decision;
-- backend identity and real-weight flag;
-- local weight inventory;
-- runtime invariant vector;
-- lawful status and runtime drift.
+- `schemas/model-manifest.schema.json`
+- `schemas/agent-manifest.schema.json`
+- `schemas/collective-request.schema.json`
+- `schemas/tier-conformance.schema.json`
+- `schemas/family-conformance.schema.json`
+- `schemas/collective-response.schema.json`
 
-Family reports use `OIMSFamilyConformanceReport` version 2 and contain:
+Tier receipts include manifest-pinned provider, architecture, model lineage, exact GGUF identity,
+prompt/contract/output hashes, preflight decision, backend evidence, runtime invariants, optional
+agent binding, and a canonical record seal.
 
-- all executed tiers;
-- tier record hashes;
-- shared contract hash;
-- invariant mismatch ratio;
-- runtime-isomorphic decision;
-- independent real-weight execution decision;
-- `WEIGHT_BACKED` or `TEST_OR_INCOMPLETE` evidence classification.
+Family reports link every tier seal and record the complete tier/provider/architecture vectors,
+heterogeneity decision, mesh declaration, runtime drift, real-weight decision, and evidence class.
 
-The Python implementation is authoritative until a standalone JSON Schema is published.
+CollectiveOS responses link the request hash, role binding, tier receipt, activation semantics, and
+an explicit false autonomous-worker claim.
+
+Run the semantic and cryptographic verifier:
+
+```bash
+python -m oims verify --path artifacts/conformance_report.jsonld
+```

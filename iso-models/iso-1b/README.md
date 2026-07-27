@@ -1,11 +1,18 @@
-# ISO-1B
+# ISO-1B — Intake/Edge
 
-ISO-1B is the smallest OIMS weight-backed tier.
-
-- binding: Qwen2.5-1.5B-Instruct GGUF
+- binding: Qwen2.5-1.5B-Instruct
+- architecture family: Qwen2
+- provider: Qwen
 - quantization: Q4_K_M
-- local download: approximately 1.1 GB
-- status: runtime binding implemented
-- execution: `python -m oims run --tier ISO-1B --prompt "..."`;
+- exact download: 1,117,320,736 bytes
+- default offload: all layers
+- roles: SYN Edge and fast intake
 
-The exact repository revision and filename are defined in `MODEL_MANIFEST.json`.
+Run:
+
+```bash
+python -m oims run --tier ISO-1B --prompt "bounded intake probe"
+python -m oims collective --agent Syn --prompt "classify this request"
+```
+
+Exact revision, size, and SHA-256 are in `MODEL_MANIFEST.json`.

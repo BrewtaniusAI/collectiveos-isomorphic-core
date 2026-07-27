@@ -1,18 +1,24 @@
 # Release Status
 
 ## Current phase
-Executable multi-tier local-weight release candidate.
+
+Heterogeneous local-agent family release candidate 0.3.0.
 
 ## Implemented
-- ISO-1B, ISO-7B, and ISO-30B pinned GGUF bindings
-- sequential local-weight execution
-- input-first shared family contract
-- per-tier and family conformance receipts
-- prompt, contract, output, record, and weight hashing
-- assertive tests and CI
 
-## Pending
-- physical weight download and CUDA smoke run on target hardware
-- signed or external WORM receipts
-- independent semantic-equivalence benchmark corpus
-- OIMS source-code license selection
+- Qwen2 intake, Mistral operator, and Kimi Linear strategist bindings;
+- exact upstream GGUF byte identities;
+- CollectiveOS role registry and sealed bridge envelopes;
+- explicit local ISO-Mesh surface;
+- shared input-first contract;
+- tier, family, and CollectiveOS schemas and verifier;
+- assertive tests and CI;
+- machine-readable scope ledger.
+
+## Acceptance pending
+
+- physical 28.17 GB download and CUDA/CPU-offload run;
+- verified `WEIGHT_BACKED` family report;
+- owner-selected source license;
+- external signing/WORM authority;
+- independent semantic evaluation.

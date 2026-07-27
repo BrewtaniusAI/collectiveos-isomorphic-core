@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oims.collective-osp.org/schemas/collective-response-v1.json",
+  "title": "CollectiveOS OIMS response envelope",
+  "type": "object",
+  "required": [
+    "@context",
+    "@type",
+    "schema_version",
+    "request_id",
+    "request_sha256",
+    "activation_semantics",
+    "autonomous_worker_claim",
+    "governance_route",
+    "agent_manifest_sha256",
+    "agent_binding",
+    "result_record_sha256",
+    "result",
+    "record_sha256"
+  ],
+  "properties": {
+    "@type": {"const": "CollectiveOIMSResponse"},
+    "schema_version": {"const": 1},
+    "request_id": {"type": "string"},
+    "request_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "activation_semantics": {"const": "role_binding_only"},
+    "autonomous_worker_claim": {"const": false},
+    "governance_route": {
+      "type": "array",
+      "prefixItems": [
+        {"const": "QC"},
+        {"const": "GATA"},
+        {"const": "GATA_PRIME"}
+      ],
+      "items": false,
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "agent_manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "agent_binding": {"type": "object"},
+    "result_record_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "result": {"$ref": "tier-conformance.schema.json"},
+    "record_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "additionalProperties": true
+}

@@ -1,0 +1,6 @@
+{
+  "request_id": "collective-example-001",
+  "agent": "Giles",
+  "prompt": "Create a bounded implementation strategy and identify every external acceptance gate.",
+  "max_tokens": 512
+}

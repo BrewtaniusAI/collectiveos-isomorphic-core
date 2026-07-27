@@ -49,9 +49,11 @@ def inspect_tier(
     tier_dir = weights_root / spec.name
     lock_path = tier_dir / "weights.lock.json"
     locked: dict[str, dict[str, Any]] = {}
+    lock_metadata: dict[str, Any] = {}
     if lock_path.is_file():
         try:
             lock = json.loads(lock_path.read_text(encoding="utf-8"))
+            lock_metadata = lock
             locked = {
                 str(item["filename"]): item
                 for item in lock.get("files", [])
@@ -61,15 +63,15 @@ def inspect_tier(
             locked = {}
 
     files: list[WeightFileStatus] = []
-    for filename in spec.files:
+    expected = {item.filename: item for item in spec.weight_files}
+    for file_spec in spec.weight_files:
+        filename = file_spec.filename
         path = tier_dir / filename
         exists = path.is_file()
         size = path.stat().st_size if exists else None
         digest: str | None = None
         if exists and compute_hashes:
             digest = sha256_file(path)
-        elif exists and filename in locked:
-            digest = locked[filename].get("sha256")
         files.append(
             WeightFileStatus(
                 filename=filename,
@@ -82,18 +84,23 @@ def inspect_tier(
 
     complete = all(item.exists for item in files)
     lock_present = bool(locked) and all(item.filename in locked for item in files)
-    size_verified = (
-        complete
-        and lock_present
-        and all(item.size == locked[item.filename].get("size") for item in files)
+    size_verified = complete and all(item.size == expected[item.filename].size for item in files)
+    lock_matches_manifest = (
+        lock_present
+        and lock_metadata.get("repo_id") == spec.repo_id
+        and lock_metadata.get("revision") == spec.revision
+        and all(
+            locked[item.filename].get("size") == expected[item.filename].size
+            and locked[item.filename].get("sha256") == expected[item.filename].sha256
+            for item in files
+        )
     )
     hash_verified = False
-    if complete and locked and compute_hashes:
+    if complete and compute_hashes:
         hash_verified = all(
             item.sha256 is not None
-            and item.filename in locked
-            and item.sha256 == locked[item.filename].get("sha256")
-            and item.size == locked[item.filename].get("size")
+            and item.sha256 == expected[item.filename].sha256
+            and item.size == expected[item.filename].size
             for item in files
         )
 
@@ -104,8 +111,10 @@ def inspect_tier(
         "quantization": spec.quantization,
         "complete": complete,
         "lock_present": lock_present,
+        "lock_matches_manifest": lock_matches_manifest,
         "size_verified": size_verified,
         "hash_verified": hash_verified,
+        "expected_download_bytes": spec.download_bytes,
         "files": [item.to_mapping() for item in files],
     }
 
@@ -133,14 +142,21 @@ def pull_tier(spec: TierSpec, weights_root: Path) -> dict[str, Any]:
             raise WeightError(f"failed to download {spec.repo_id}/{filename}: {exc}") from exc
         downloaded.append(Path(local_path))
 
-    inventory = [
-        {
+    inventory = []
+    expected = {item.filename: item for item in spec.weight_files}
+    for path in downloaded:
+        file_spec = expected[path.name]
+        actual = {
             "filename": path.name,
             "size": path.stat().st_size,
             "sha256": sha256_file(path),
         }
-        for path in downloaded
-    ]
+        if actual["size"] != file_spec.size or actual["sha256"] != file_spec.sha256:
+            raise WeightError(
+                f"{spec.name} upstream identity mismatch for {path.name}: "
+                "downloaded bytes do not match MODEL_MANIFEST.json"
+            )
+        inventory.append(actual)
     lock = {
         "schema_version": 1,
         "tier": spec.name,
@@ -154,7 +170,7 @@ def pull_tier(spec: TierSpec, weights_root: Path) -> dict[str, Any]:
     atomic_write_json(tier_dir / "weights.lock.json", lock)
     status = inspect_tier(spec, weights_root, compute_hashes=False)
     status["hash_verified"] = True
-    status["verification"] = "sha256-computed-during-download"
+    status["verification"] = "sha256-matched-pinned-upstream-identity"
     return status
 
 

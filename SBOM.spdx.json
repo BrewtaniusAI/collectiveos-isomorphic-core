@@ -1,0 +1,96 @@
+{
+  "spdxVersion": "SPDX-2.3",
+  "dataLicense": "CC0-1.0",
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "name": "collectiveos-isomorphic-core-0.3.0-source-sbom",
+  "documentNamespace": "https://github.com/BrewtaniusAI/collectiveos-isomorphic-core/sbom/0.3.0",
+  "creationInfo": {
+    "created": "2026-07-27T00:00:00Z",
+    "creators": ["Tool: Codex source dependency inventory"]
+  },
+  "packages": [
+    {
+      "name": "collectiveos-isomorphic-core",
+      "SPDXID": "SPDXRef-Package-OIMS",
+      "versionInfo": "0.3.0",
+      "downloadLocation": "https://github.com/BrewtaniusAI/collectiveos-isomorphic-core",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "PyYAML",
+      "SPDXID": "SPDXRef-Package-PyYAML",
+      "versionInfo": "6.0.3",
+      "downloadLocation": "https://pypi.org/project/PyYAML/6.0.3/",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:pypi/pyyaml@6.0.3"
+        }
+      ]
+    },
+    {
+      "name": "huggingface-hub",
+      "SPDXID": "SPDXRef-Package-HuggingFaceHub",
+      "versionInfo": "1.25.1",
+      "downloadLocation": "https://pypi.org/project/huggingface-hub/1.25.1/",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "Apache-2.0",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:pypi/huggingface-hub@1.25.1"
+        }
+      ]
+    },
+    {
+      "name": "llama-cpp-python",
+      "SPDXID": "SPDXRef-Package-LlamaCppPython",
+      "versionInfo": "0.3.34",
+      "downloadLocation": "https://pypi.org/project/llama-cpp-python/0.3.34/",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "copyrightText": "NOASSERTION",
+      "externalRefs": [
+        {
+          "referenceCategory": "PACKAGE-MANAGER",
+          "referenceType": "purl",
+          "referenceLocator": "pkg:pypi/llama-cpp-python@0.3.34"
+        }
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "spdxElementId": "SPDXRef-DOCUMENT",
+      "relationshipType": "DESCRIBES",
+      "relatedSpdxElement": "SPDXRef-Package-OIMS"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-OIMS",
+      "relationshipType": "DEPENDS_ON",
+      "relatedSpdxElement": "SPDXRef-Package-PyYAML"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-HuggingFaceHub",
+      "relationshipType": "OPTIONAL_DEPENDENCY_OF",
+      "relatedSpdxElement": "SPDXRef-Package-OIMS"
+    },
+    {
+      "spdxElementId": "SPDXRef-Package-LlamaCppPython",
+      "relationshipType": "OPTIONAL_DEPENDENCY_OF",
+      "relatedSpdxElement": "SPDXRef-Package-OIMS"
+    }
+  ]
+}

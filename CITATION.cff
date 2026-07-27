@@ -2,6 +2,9 @@ cff-version: 1.2.0
 title: "CollectiveOS Isomorphic Core"
 message: "If you use this repository, please cite the associated Zenodo record."
 type: software
+version: 0.3.0
+date-released: 2026-07-27
+repository-code: "https://github.com/BrewtaniusAI/collectiveos-isomorphic-core"
 authors:
   - family-names: Brewer
     given-names: Mark Anthony
