@@ -154,9 +154,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--weights-dir",
         type=lambda value: Path(value).expanduser().resolve(),
-        default=Path(
-            os.environ.get("OIMS_WEIGHTS_DIR", DEFAULT_WEIGHTS_DIR)
-        ).resolve(),
+        default=Path(os.environ.get("OIMS_WEIGHTS_DIR", DEFAULT_WEIGHTS_DIR)).resolve(),
     )
     parser.add_argument(
         "--artifacts-dir",
