@@ -1,97 +1,158 @@
 {
   "schema_version": 1,
   "repository": "collectiveos-isomorphic-core",
-  "release_candidate": "0.3.0",
+  "release_candidate": "0.3.1",
   "scope_status": "IN_REPO_COMPLETE_TARGET_ACCEPTANCE_PENDING",
   "components": [
     {
       "id": "heterogeneous-family",
       "status": "implemented",
-      "evidence": ["MODEL_MANIFEST.json", "tests/test_manifest.py"],
+      "evidence": [
+        "MODEL_MANIFEST.json",
+        "tests/test_manifest.py"
+      ],
       "acceptance": "Three unique providers and architecture families are manifest-valid."
     },
     {
       "id": "exact-weight-identity",
       "status": "implemented",
-      "evidence": ["MODEL_MANIFEST.json", "oims/weights.py", "tests/test_weights.py"],
+      "evidence": [
+        "MODEL_MANIFEST.json",
+        "oims/weights.py",
+        "tests/test_weights.py"
+      ],
       "acceptance": "Every GGUF has an exact revision, filename, byte size, and upstream SHA-256."
     },
     {
       "id": "shared-governance-contract",
       "status": "implemented",
-      "evidence": ["contracts/oims-family.contract.yaml", "oims/contracts.py"],
+      "evidence": [
+        "contracts/oims-family.contract.yaml",
+        "oims/contracts.py"
+      ],
       "acceptance": "Input is validated before backend construction and output afterward."
     },
     {
       "id": "collective-agent-bindings",
       "status": "implemented",
-      "evidence": ["AGENT_MANIFEST.json", "oims/agents.py", "tests/test_agents.py"],
+      "evidence": [
+        "AGENT_MANIFEST.json",
+        "oims/agents.py",
+        "tests/test_agents.py"
+      ],
       "acceptance": "Named role aliases resolve to declared tiers with autonomous_worker_claim false and QC -> GATA -> GATA_PRIME governance."
     },
     {
       "id": "collective-bridge",
       "status": "implemented",
-      "evidence": ["oims/collective.py", "COLLECTIVE_INTEGRATION.md", "schemas/collective-request.schema.json", "schemas/collective-response.schema.json"],
+      "evidence": [
+        "oims/collective.py",
+        "COLLECTIVE_INTEGRATION.md",
+        "schemas/collective-request.schema.json",
+        "schemas/collective-response.schema.json"
+      ],
       "acceptance": "Requests produce sealed role-bound response envelopes linked to tier receipts."
+    },
+    {
+      "id": "loopback-collective-service",
+      "status": "implemented",
+      "evidence": [
+        "oims/service.py",
+        "tests/test_service.py",
+        "COLLECTIVE_INTEGRATION.md"
+      ],
+      "acceptance": "A token-authenticated loopback request returns the sealed role-bound OIMS response; missing real weights remain explicitly degraded."
     },
     {
       "id": "iso-mesh",
       "status": "implemented-local-sequential",
-      "evidence": ["MODEL_MANIFEST.json", "oims/runtime.py", "iso-models/iso-mesh/README.md"],
+      "evidence": [
+        "MODEL_MANIFEST.json",
+        "oims/runtime.py",
+        "iso-models/iso-mesh/README.md"
+      ],
       "acceptance": "All heterogeneous tiers execute sequentially and produce one linked report."
     },
     {
       "id": "receipt-schemas",
       "status": "implemented",
-      "evidence": ["schemas/", "tests/test_schemas.py"],
+      "evidence": [
+        "schemas/",
+        "tests/test_schemas.py"
+      ],
       "acceptance": "Manifest, agent, tier, family, and CollectiveOS schemas are published."
     },
     {
       "id": "artifact-verification",
       "status": "implemented",
-      "evidence": ["oims/verify.py", "tests/test_runtime.py", "tests/test_agents.py"],
+      "evidence": [
+        "oims/verify.py",
+        "tests/test_runtime.py",
+        "tests/test_agents.py"
+      ],
       "acceptance": "Seals, nested links, manifest identity, bindings, and evidence class fail closed."
     },
     {
       "id": "automated-ci",
       "status": "implemented",
-      "evidence": [".github/workflows/ci.yml", "tests/"],
+      "evidence": [
+        ".github/workflows/ci.yml",
+        "tests/"
+      ],
       "acceptance": "Dependency-light unit, fixture, CollectiveOS, and verification tests pass."
     },
     {
       "id": "dependency-supply-chain",
       "status": "implemented-source-level",
-      "evidence": ["requirements/ci.lock", "requirements/target-direct.lock", "SBOM.spdx.json", ".github/dependabot.yml"],
+      "evidence": [
+        "requirements/ci.lock",
+        "requirements/target-direct.lock",
+        "SBOM.spdx.json",
+        ".github/dependabot.yml"
+      ],
       "acceptance": "CI and direct target versions are pinned and the declared source dependency set has an SPDX SBOM."
     },
     {
       "id": "target-weight-execution",
       "status": "pending-target-machine",
-      "evidence": ["scripts/run_all_weights.ps1", "VERIFICATION.md"],
+      "evidence": [
+        "scripts/run_all_weights.ps1",
+        "VERIFICATION.md"
+      ],
       "acceptance": "RTX 4090 report is valid, runtime_isomorphic true, and WEIGHT_BACKED."
     },
     {
       "id": "proof-vault-worm",
       "status": "pending-external-authority",
-      "evidence": ["KNOWN_GAPS.md"],
+      "evidence": [
+        "KNOWN_GAPS.md"
+      ],
       "acceptance": "Owner-approved signing identity and WORM destination are configured."
     },
     {
       "id": "semantic-equivalence",
       "status": "pending-independent-evaluation",
-      "evidence": ["LIMITATIONS.md", "KNOWN_GAPS.md"],
+      "evidence": [
+        "LIMITATIONS.md",
+        "KNOWN_GAPS.md"
+      ],
       "acceptance": "Independent corpus, metrics, evaluator, and thresholds are approved and run."
     },
     {
       "id": "source-license",
       "status": "blocked-owner-decision",
-      "evidence": ["README.md", "RELEASE_CHECKLIST.md"],
+      "evidence": [
+        "README.md",
+        "RELEASE_CHECKLIST.md"
+      ],
       "acceptance": "Owner selects and commits the intended OIMS source license."
     },
     {
       "id": "distributed-mesh",
       "status": "deferred-outside-0.3",
-      "evidence": ["iso-models/iso-mesh/README.md"],
+      "evidence": [
+        "iso-models/iso-mesh/README.md"
+      ],
       "acceptance": "A later release defines transport, node identity, scheduling, and failure semantics."
     }
   ]

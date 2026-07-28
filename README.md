@@ -68,11 +68,31 @@ Python 3.10 or newer is required.
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -e ".[weights]"
+python -m pip install -e ".[weights,service]"
 ```
 
 Install a CUDA-enabled `llama-cpp-python>=0.3.34,<0.4`. Current installation options and the
 Windows/RTX 4090 path are in `WEIGHTS.md`.
+
+## Loopback service for Giles
+
+The service exposes the existing sealed CollectiveOS bridge without exposing OIMS to the LAN.
+It refuses non-loopback binding and requires a separate 32-byte bearer token.
+
+```powershell
+$env:OIMS_SERVICE_TOKEN = "<random 32-byte-or-longer secret>"
+oims-service --host 127.0.0.1 --port 9319
+```
+
+Endpoints:
+
+- `GET /health` reports real weight/runtime readiness and uses `degraded` when physical
+  execution is not ready.
+- `POST /v1/collective` accepts the documented CollectiveOS request envelope and returns the
+  original sealed `CollectiveOIMSResponse`.
+
+The service serializes local weight execution. It performs inference only and does not grant
+filesystem, shell, desktop, network, or governance authority.
 
 ## Download and run the whole family
 
