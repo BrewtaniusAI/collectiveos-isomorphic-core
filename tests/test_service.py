@@ -42,7 +42,7 @@ def test_collective_service_requires_exact_bearer_token(tmp_path: Path) -> None:
     result = response.json()
     assert result["@type"] == "CollectiveOIMSResponse"
     assert result["request_id"] == "req-1"
-    assert result["agent_binding"]["profile_id"] == "giles-strategist"
+    assert result["agent_binding"]["id"] == "giles-strategist"
     assert result["result"]["lawful"] is True
     assert result["result"]["backend"]["real_weights"] is False
 
