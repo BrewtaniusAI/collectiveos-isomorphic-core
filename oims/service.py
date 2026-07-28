@@ -159,9 +159,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--artifacts-dir",
         type=lambda value: Path(value).expanduser().resolve(),
-        default=Path(
-            os.environ.get("OIMS_ARTIFACTS_DIR", DEFAULT_ARTIFACTS_DIR)
-        ).resolve(),
+        default=Path(os.environ.get("OIMS_ARTIFACTS_DIR", DEFAULT_ARTIFACTS_DIR)).resolve(),
     )
     return parser
 
