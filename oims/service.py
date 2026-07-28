@@ -14,7 +14,7 @@ import uvicorn
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from .agents import AgentRegistry, load_agent_registry
+from .agents import AgentManifestError, AgentRegistry, load_agent_registry
 from .collective import (
     CollectiveRequestError,
     ProfileBackendFactory,
@@ -129,7 +129,7 @@ def create_app(
     async def collective(payload: CollectiveServiceRequest) -> dict[str, Any]:
         try:
             return await runtime.execute(payload)
-        except CollectiveRequestError as exc:
+        except (AgentManifestError, CollectiveRequestError) as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except (OSError, RuntimeError, ValueError) as exc:
             raise HTTPException(
@@ -154,12 +154,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--weights-dir",
         type=lambda value: Path(value).expanduser().resolve(),
-        default=Path(os.environ.get("OIMS_WEIGHTS_DIR", DEFAULT_WEIGHTS_DIR)).resolve(),
+        default=Path(\n            os.environ.get("OIMS_WEIGHTS_DIR", DEFAULT_WEIGHTS_DIR)\n        ).resolve(),
     )
     parser.add_argument(
         "--artifacts-dir",
         type=lambda value: Path(value).expanduser().resolve(),
-        default=Path(os.environ.get("OIMS_ARTIFACTS_DIR", DEFAULT_ARTIFACTS_DIR)).resolve(),
+        default=Path(\n            os.environ.get("OIMS_ARTIFACTS_DIR", DEFAULT_ARTIFACTS_DIR)\n        ).resolve(),
     )
     return parser
 
