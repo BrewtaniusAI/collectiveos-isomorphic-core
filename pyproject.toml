@@ -30,7 +30,8 @@ dev = [
 ]
 
 [project.scripts]
-oims = "oims.cli:main"\noims-service = "oims.service:main"
+oims = "oims.cli:main"
+oims-service = "oims.service:main"
 
 [tool.setuptools.packages.find]
 include = ["oims*"]
