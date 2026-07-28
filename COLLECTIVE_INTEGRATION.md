@@ -88,8 +88,22 @@ PowerShell:
 In this implementation, QC is preflight validation, GATA is post-inference/output validation, and
 GATA PRIME is receipt sealing and verification. External governance services are not implied.
 
+## Loopback service
+
+Version 0.3.1 adds an authenticated local service:
+
+```powershell
+$env:OIMS_SERVICE_TOKEN = "<random 32-byte-or-longer secret>"
+oims-service --host 127.0.0.1 --port 9319
+```
+
+`POST /v1/collective` accepts the same request object and returns the same sealed response.
+Inference is serialized so multiple callers do not load competing weight tiers simultaneously.
+`GET /health` distinguishes physical weight readiness from fixture or source completeness.
+
 ## Deployment boundary
 
-Version 0.3.0 provides an importable Python function and CLI/file transport. A long-running
-CollectiveOS service adapter, authentication policy, process isolation, queueing, and external
-actuation gate must be supplied by the owning deployment and are not claimed active here.
+The service refuses non-loopback binding. Authentication is deployment-owned and separate from
+Quest device credentials. Process isolation, forced inference cancellation, external actuation,
+and canonical Proof Vault/WORM authority remain outside OIMS and must be supplied by the owning
+deployment.
