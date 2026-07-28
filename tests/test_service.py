@@ -5,7 +5,6 @@ from fastapi.testclient import TestClient
 from oims.backends import DeterministicFixtureBackend
 from oims.service import create_app, require_loopback
 
-
 TOKEN = "s" * 32
 
 
