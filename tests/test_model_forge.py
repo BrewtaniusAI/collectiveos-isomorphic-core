@@ -2364,6 +2364,20 @@ def test_launcher_executes_validated_snapshot_without_ambient_mode_inputs() -> N
     assert launcher.index("config --format json") < launcher.index(
         "$ComposeOutput | & docker compose -f - run"
     )
+
+
+def test_launcher_rejects_writable_output_aliases_of_protected_inputs() -> None:
+    launcher = (ROOT / "scripts" / "run_model_forge.ps1").read_text(encoding="utf-8")
+
+    assert "function Test-PathsOverlap" in launcher
+    assert "[System.IO.Path]::GetRelativePath($Left, $Right)" in launcher
+    assert "[System.IO.Path]::GetRelativePath($Right, $Left)" in launcher
+    assert "foreach ($ProtectedSource in @($PlanPath, $BaseModelPath, $DatasetPath))" in launcher
+    refusal = (
+        "OutputDir must not equal, contain, or be contained by Plan, BaseModelDir, or DatasetDir."
+    )
+    assert refusal in launcher
+    assert launcher.index(refusal) < launcher.index("config --format json")
     assert "Verify requires -Receipt" in launcher
     assert "Verify requires Receipt to remain beneath OutputDir" in launcher
     assert "$env:FORGE_RECEIPT = $ContainerReceipt" in launcher

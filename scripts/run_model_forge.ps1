@@ -28,6 +28,31 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+function Test-ContainedRelativePath {
+    param([Parameter(Mandatory = $true)][string]$RelativePath)
+
+    $ParentPrefix = '..' + [System.IO.Path]::DirectorySeparatorChar
+    return (
+        -not [System.IO.Path]::IsPathRooted($RelativePath) -and
+        $RelativePath -ne '..' -and
+        -not $RelativePath.StartsWith($ParentPrefix)
+    )
+}
+
+function Test-PathsOverlap {
+    param(
+        [Parameter(Mandatory = $true)][string]$Left,
+        [Parameter(Mandatory = $true)][string]$Right
+    )
+
+    $LeftToRight = [System.IO.Path]::GetRelativePath($Left, $Right)
+    $RightToLeft = [System.IO.Path]::GetRelativePath($Right, $Left)
+    return (
+        (Test-ContainedRelativePath -RelativePath $LeftToRight) -or
+        (Test-ContainedRelativePath -RelativePath $RightToLeft)
+    )
+}
+
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     throw 'Docker Desktop / docker CLI is required.'
 }
@@ -114,6 +139,14 @@ foreach ($Directory in @($BaseModelDir, $DatasetDir, $OutputDir)) {
         }
     }
 }
+$BaseModelPath = (Resolve-Path -LiteralPath $BaseModelDir).Path
+$DatasetPath = (Resolve-Path -LiteralPath $DatasetDir).Path
+$OutputPath = (Resolve-Path -LiteralPath $OutputDir).Path
+foreach ($ProtectedSource in @($PlanPath, $BaseModelPath, $DatasetPath)) {
+    if (Test-PathsOverlap -Left $OutputPath -Right $ProtectedSource) {
+        throw 'OutputDir must not equal, contain, or be contained by Plan, BaseModelDir, or DatasetDir.'
+    }
+}
 
 $ContainerReceipt = $null
 if ($Mode -eq 'Verify') {
@@ -124,7 +157,7 @@ if ($Mode -eq 'Verify') {
     if (-not (Test-Path -LiteralPath $ReceiptPath -PathType Leaf)) {
         throw "Forge receipt does not exist: $ReceiptPath"
     }
-    $OutputRoot = (Resolve-Path -LiteralPath $OutputDir).Path
+    $OutputRoot = $OutputPath
     $RelativeReceipt = [System.IO.Path]::GetRelativePath($OutputRoot, $ReceiptPath)
     $ParentPrefix = '..' + [System.IO.Path]::DirectorySeparatorChar
     if (
@@ -187,9 +220,9 @@ try {
     $env:FORGE_SOURCE_COMMIT = $SourceCommit
     $env:FORGE_SOURCE_TREE = $SourceTree
     $env:FORGE_PLAN = $PlanPath
-    $env:FORGE_BASE_MODEL_DIR = (Resolve-Path -LiteralPath $BaseModelDir).Path
-    $env:FORGE_DATASET_DIR = (Resolve-Path -LiteralPath $DatasetDir).Path
-    $env:FORGE_OUTPUT = (Resolve-Path -LiteralPath $OutputDir).Path
+    $env:FORGE_BASE_MODEL_DIR = $BaseModelPath
+    $env:FORGE_DATASET_DIR = $DatasetPath
+    $env:FORGE_OUTPUT = $OutputPath
     [Environment]::SetEnvironmentVariable('FORGE_RECEIPT', $null, 'Process')
     [Environment]::SetEnvironmentVariable('FORGE_ACCEPT_PLAN_HASH', $null, 'Process')
     if ($ContainerReceipt) {
@@ -250,15 +283,15 @@ try {
             ReadOnly = $true
         }
         '/forge/output' = @{
-            Source = (Resolve-Path -LiteralPath $OutputDir).Path
+            Source = $OutputPath
             ReadOnly = $false
         }
         '/forge/inputs/base' = @{
-            Source = (Resolve-Path -LiteralPath $BaseModelDir).Path
+            Source = $BaseModelPath
             ReadOnly = $true
         }
         '/forge/inputs/dataset' = @{
-            Source = (Resolve-Path -LiteralPath $DatasetDir).Path
+            Source = $DatasetPath
             ReadOnly = $true
         }
     }
