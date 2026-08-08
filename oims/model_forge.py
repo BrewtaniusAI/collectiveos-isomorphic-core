@@ -1614,6 +1614,12 @@ def _forge_mount_policy() -> dict[str, bool]:
     }
     result = {name: False for name in targets.values()}
     result["output_process_writable"] = False
+    protected_input_paths = {
+        PurePosixPath(target): observation
+        for target, observation in targets.items()
+        if observation in {"base_model_read_only", "dataset_read_only"}
+    }
+    writable_protected_submounts: set[str] = set()
     try:
         lines = Path("/proc/self/mountinfo").read_text(encoding="utf-8").splitlines()
     except OSError:
@@ -1627,16 +1633,22 @@ def _forge_mount_policy() -> dict[str, bool]:
         if len(fields) < 6 or not filesystem_fields:
             continue
         mountpoint = fields[4].replace("\\040", " ")
+        mount_path = PurePosixPath(mountpoint)
+        options = set(fields[5].split(","))
+        for protected_path, protected_observation in protected_input_paths.items():
+            if protected_path in mount_path.parents and ("ro" not in options or "rw" in options):
+                writable_protected_submounts.add(protected_observation)
         observation = targets.get(mountpoint)
         if observation is None:
             continue
-        options = set(fields[5].split(","))
         if observation == "output_writable":
             result[observation] = "rw" in options and "ro" not in options
         elif observation == "tmpfs_active":
             result[observation] = filesystem_fields[0] == "tmpfs"
         else:
             result[observation] = "ro" in options and "rw" not in options
+    for observation in writable_protected_submounts:
+        result[observation] = False
     result["output_process_writable"] = _output_path_process_writable()
     return result
 

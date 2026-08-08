@@ -16,6 +16,7 @@ from oims.manifest import ROOT
 from oims.model_forge import (
     EXPECTED_TARGET_PARAMETERS,
     ForgePlanError,
+    _forge_mount_policy,
     _installed_package_digest,
     compute_plan_hash,
     forge_container_environment_errors,
@@ -624,6 +625,36 @@ def test_non_json_public_inputs_return_refusals_instead_of_raising() -> None:
     assert "Forge environment must be a mapping" in environment_receipt["errors"]
 
 
+def test_probe_cli_uses_fixed_receipt_name_for_invalid_plan_hash(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    plan = probe_plan()
+    plan["plan_hash"] = "x/../../../owned"
+    plan_path = tmp_path / "malformed-probe.json"
+    plan_path.write_text(json.dumps(plan), encoding="utf-8")
+    output_path = tmp_path / "receipts"
+
+    with patch("oims.cli.atomic_create_json") as create_receipt:
+        exit_code = cli_main(
+            [
+                "forge",
+                "probe",
+                "--plan",
+                str(plan_path),
+                "--accept-plan-hash",
+                plan["plan_hash"],
+                "--output",
+                str(output_path),
+            ]
+        )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 2
+    assert payload["lawful"] is False
+    assert create_receipt.call_args.args[0] == output_path / "preflight-invalid.json"
+
+
 def test_probe_mode_refuses_simulation_payload() -> None:
     plan = load_example()
     plan["mode"] = "probe"
@@ -909,6 +940,40 @@ def test_probe_requires_process_level_output_write() -> None:
     run.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    "protected_path,observation",
+    [
+        ("/forge/inputs/base", "base_model_read_only"),
+        ("/forge/inputs/dataset", "dataset_read_only"),
+    ],
+)
+def test_probe_mount_policy_rejects_writable_protected_input_submounts(
+    protected_path: str,
+    observation: str,
+) -> None:
+    mountinfo = "\n".join(
+        [
+            "1 0 0:1 / /forge/plan.json ro - ext4 /dev/root ro",
+            "2 0 0:2 / /forge/inputs/base ro - ext4 /dev/root ro",
+            "3 0 0:3 / /forge/inputs/dataset ro - ext4 /dev/root ro",
+            "4 0 0:4 / /forge/output rw - ext4 /dev/root rw",
+            "5 0 0:5 / /tmp rw - tmpfs tmpfs rw",
+            f"6 2 0:6 / {protected_path}/injected rw - ext4 /dev/root rw",
+        ]
+    )
+    with (
+        patch("oims.model_forge.Path.read_text", return_value=mountinfo),
+        patch("oims.model_forge._output_path_process_writable", return_value=True),
+    ):
+        policy = _forge_mount_policy()
+
+    assert policy[observation] is False
+    other_observation = (
+        "dataset_read_only" if observation == "base_model_read_only" else "base_model_read_only"
+    )
+    assert policy[other_observation] is True
+
+
 def test_probe_cli_turns_receipt_write_failure_into_a_refusal(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -943,7 +1008,13 @@ def test_probe_cli_never_replaces_an_existing_receipt(
     plan = probe_plan()
     receipt_path = tmp_path / f"preflight-{plan['plan_hash'][7:23]}.json"
     receipt_path.write_text("original evidence\n", encoding="utf-8")
-    result = {"lawful": True, "status": "READY", "qmf_admissible": False, "errors": []}
+    result = {
+        "lawful": True,
+        "status": "READY",
+        "qmf_admissible": False,
+        "errors": [],
+        "plan_hash": plan["plan_hash"],
+    }
     with patch("oims.cli.inspect_physical_preflight", return_value=result):
         exit_code = cli_main(
             [

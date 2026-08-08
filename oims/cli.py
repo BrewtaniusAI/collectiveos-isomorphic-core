@@ -33,6 +33,17 @@ def _path(value: str) -> Path:
     return Path(value).expanduser().resolve()
 
 
+def _preflight_receipt_name(plan_hash: object) -> str:
+    if (
+        isinstance(plan_hash, str)
+        and len(plan_hash) == 71
+        and plan_hash.startswith("sha256:")
+        and all(character in "0123456789abcdef" for character in plan_hash[7:])
+    ):
+        return f"preflight-{plan_hash[7:23]}.json"
+    return "preflight-invalid.json"
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="oims")
     parser.add_argument(
@@ -191,9 +202,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             plan,
             accepted_plan_hash=args.accept_plan_hash,
         )
-        receipt_path = args.output / (
-            f"preflight-{str(plan.get('plan_hash', 'invalid')).removeprefix('sha256:')[:16]}.json"
-        )
+        receipt_path = args.output / _preflight_receipt_name(result.get("plan_hash"))
         try:
             atomic_create_json(receipt_path, result)
         except FileExistsError:
