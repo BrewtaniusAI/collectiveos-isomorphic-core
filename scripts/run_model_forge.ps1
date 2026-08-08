@@ -57,12 +57,29 @@ function Test-PathsOverlap {
     )
 }
 
+function Test-BackingTreeSetsOverlap {
+    param(
+        [Parameter(Mandatory = $true)][string[]]$Left,
+        [Parameter(Mandatory = $true)][string[]]$Right
+    )
+
+    foreach ($LeftPath in $Left) {
+        foreach ($RightPath in $Right) {
+            if (Test-PathsOverlap -Left $LeftPath -Right $RightPath) {
+                return $true
+            }
+        }
+    }
+    return $false
+}
+
 function Get-ForgePathSnapshot {
     param([Parameter(Mandatory = $true)][string]$Path)
 
     if (-not ('OimsForgePathIdentity' -as [type])) {
         Add-Type -TypeDefinition @'
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Globalization;
 using System.IO;
@@ -75,6 +92,7 @@ public sealed class OimsForgePathSnapshot : IDisposable
     public string Identity { get; private set; }
     public string BackingIdentity { get; private set; }
     public string BackingTreePath { get; private set; }
+    public string[] BackingTreePaths { get; private set; }
     public string CanonicalPath { get; private set; }
     public string BoundPath { get; private set; }
     private SafeFileHandle WindowsHandle;
@@ -84,6 +102,7 @@ public sealed class OimsForgePathSnapshot : IDisposable
         string identity,
         string backingIdentity,
         string backingTreePath,
+        string[] backingTreePaths,
         string canonicalPath,
         string boundPath,
         SafeFileHandle windowsHandle)
@@ -91,6 +110,7 @@ public sealed class OimsForgePathSnapshot : IDisposable
         Identity = identity;
         BackingIdentity = backingIdentity;
         BackingTreePath = backingTreePath;
+        BackingTreePaths = backingTreePaths;
         CanonicalPath = canonicalPath;
         BoundPath = boundPath;
         WindowsHandle = windowsHandle;
@@ -100,6 +120,7 @@ public sealed class OimsForgePathSnapshot : IDisposable
         string identity,
         string backingIdentity,
         string backingTreePath,
+        string[] backingTreePaths,
         string canonicalPath,
         string boundPath,
         int linuxDescriptor)
@@ -107,6 +128,7 @@ public sealed class OimsForgePathSnapshot : IDisposable
         Identity = identity;
         BackingIdentity = backingIdentity;
         BackingTreePath = backingTreePath;
+        BackingTreePaths = backingTreePaths;
         CanonicalPath = canonicalPath;
         BoundPath = boundPath;
         LinuxDescriptor = linuxDescriptor;
@@ -146,6 +168,7 @@ public static class OimsForgePathIdentity
     private const uint StatxMountId = 0x00001000;
     private const int MaximumMountInfoLines = 65536;
     private const int MaximumMountInfoLineLength = 1048576;
+    private const int MaximumBackingTreePaths = 1024;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct ByHandleFileInformation
@@ -171,6 +194,22 @@ public static class OimsForgePathIdentity
         [FieldOffset(136)] public uint DeviceMajor;
         [FieldOffset(140)] public uint DeviceMinor;
         [FieldOffset(144)] public ulong MountId;
+    }
+
+    private sealed class LinuxMountRecord
+    {
+        public ulong MountId;
+        public ulong ParentId;
+        public uint DeviceMajor;
+        public uint DeviceMinor;
+        public string Root;
+        public string MountPoint;
+    }
+
+    private sealed class LinuxBackingTree
+    {
+        public string DirectPath;
+        public string[] Paths;
     }
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -223,16 +262,60 @@ public static class OimsForgePathIdentity
             .Replace("\\134", "\\");
     }
 
-    private static string LinuxBackingTreePath(StatxBuffer buffer, string canonicalPath)
+    private static bool IsContainedPath(string root, string candidate, bool strict)
     {
-        string expectedDevice = String.Format(
+        string relative = Path.GetRelativePath(root, candidate);
+        if (
+            Path.IsPathRooted(relative) ||
+            relative == ".." ||
+            relative.StartsWith("../", StringComparison.Ordinal)
+        )
+            return false;
+        return !strict || relative != ".";
+    }
+
+    private static string LinuxBackingCoordinate(
+        uint deviceMajor,
+        uint deviceMinor,
+        string backingPath
+    )
+    {
+        string deviceRoot = String.Format(
             CultureInfo.InvariantCulture,
-            "{0}:{1}",
-            buffer.DeviceMajor,
-            buffer.DeviceMinor
+            "/oims-forge-backing/linux-{0:x8}-{1:x8}",
+            deviceMajor,
+            deviceMinor
         );
-        string mountRoot = null;
-        string mountPoint = null;
+        string normalized = Path.GetFullPath(backingPath);
+        return normalized == "/" ? deviceRoot : deviceRoot + normalized;
+    }
+
+    private static bool IsMountDescendant(
+        LinuxMountRecord candidate,
+        ulong ancestorId,
+        Dictionary<ulong, LinuxMountRecord> records
+    )
+    {
+        HashSet<ulong> observed = new HashSet<ulong>();
+        LinuxMountRecord current = candidate;
+        while (observed.Add(current.MountId))
+        {
+            if (current.ParentId == ancestorId)
+                return true;
+            if (!records.TryGetValue(current.ParentId, out current))
+                return false;
+        }
+        throw new InvalidOperationException("Host mount topology contains a parent cycle.");
+    }
+
+    private static LinuxBackingTree LinuxBackingTreePaths(
+        StatxBuffer buffer,
+        string canonicalPath
+    )
+    {
+        List<LinuxMountRecord> orderedRecords = new List<LinuxMountRecord>();
+        Dictionary<ulong, LinuxMountRecord> records =
+            new Dictionary<ulong, LinuxMountRecord>();
         int lineCount = 0;
         foreach (string line in File.ReadLines(
             "/proc/self/mountinfo",
@@ -248,6 +331,10 @@ public static class OimsForgePathIdentity
                 StringSplitOptions.RemoveEmptyEntries
             );
             ulong mountId;
+            ulong parentId;
+            string[] device = fields.Length >= 3 ? fields[2].Split(':') : new string[0];
+            uint deviceMajor;
+            uint deviceMinor;
             if (
                 separator < 0 ||
                 fields.Length < 6 ||
@@ -256,40 +343,83 @@ public static class OimsForgePathIdentity
                     NumberStyles.None,
                     CultureInfo.InvariantCulture,
                     out mountId
+                ) ||
+                !UInt64.TryParse(
+                    fields[1],
+                    NumberStyles.None,
+                    CultureInfo.InvariantCulture,
+                    out parentId
+                ) ||
+                device.Length != 2 ||
+                !UInt32.TryParse(
+                    device[0],
+                    NumberStyles.None,
+                    CultureInfo.InvariantCulture,
+                    out deviceMajor
+                ) ||
+                !UInt32.TryParse(
+                    device[1],
+                    NumberStyles.None,
+                    CultureInfo.InvariantCulture,
+                    out deviceMinor
                 )
             )
                 throw new InvalidOperationException("Host mount topology is malformed.");
-            if (mountId != buffer.MountId)
-                continue;
-            if (mountRoot != null || fields[2] != expectedDevice)
+            LinuxMountRecord record = new LinuxMountRecord
+            {
+                MountId = mountId,
+                ParentId = parentId,
+                DeviceMajor = deviceMajor,
+                DeviceMinor = deviceMinor,
+                Root = DecodeMountInfoPath(fields[3]),
+                MountPoint = DecodeMountInfoPath(fields[4]),
+            };
+            if (
+                !Path.IsPathRooted(record.Root) ||
+                !Path.IsPathRooted(record.MountPoint) ||
+                records.ContainsKey(record.MountId)
+            )
                 throw new InvalidOperationException("Host mount identity is ambiguous.");
-            mountRoot = DecodeMountInfoPath(fields[3]);
-            mountPoint = DecodeMountInfoPath(fields[4]);
+            records.Add(record.MountId, record);
+            orderedRecords.Add(record);
         }
+        LinuxMountRecord directRecord;
         if (
-            mountRoot == null ||
-            mountPoint == null ||
-            !Path.IsPathRooted(mountRoot) ||
-            !Path.IsPathRooted(mountPoint)
+            !records.TryGetValue(buffer.MountId, out directRecord) ||
+            directRecord.DeviceMajor != buffer.DeviceMajor ||
+            directRecord.DeviceMinor != buffer.DeviceMinor
         )
             throw new InvalidOperationException("Host mount backing root cannot be verified.");
-        string relative = Path.GetRelativePath(mountPoint, canonicalPath);
-        if (
-            Path.IsPathRooted(relative) ||
-            relative == ".." ||
-            relative.StartsWith("../", StringComparison.Ordinal)
-        )
+        if (!IsContainedPath(directRecord.MountPoint, canonicalPath, false))
             throw new InvalidOperationException("Host path is outside its authenticated mountpoint.");
+        string relative = Path.GetRelativePath(directRecord.MountPoint, canonicalPath);
         string backingPath = Path.GetFullPath(
-            relative == "." ? mountRoot : Path.Combine(mountRoot, relative)
+            relative == "." ? directRecord.Root : Path.Combine(directRecord.Root, relative)
         );
-        string deviceRoot = String.Format(
-            CultureInfo.InvariantCulture,
-            "/oims-forge-backing/linux-{0:x8}-{1:x8}",
+        string directPath = LinuxBackingCoordinate(
             buffer.DeviceMajor,
-            buffer.DeviceMinor
+            buffer.DeviceMinor,
+            backingPath
         );
-        return backingPath == "/" ? deviceRoot : deviceRoot + backingPath;
+        HashSet<string> paths = new HashSet<string>(StringComparer.Ordinal) { directPath };
+        foreach (LinuxMountRecord record in orderedRecords)
+        {
+            if (
+                record.MountId == directRecord.MountId ||
+                !IsMountDescendant(record, directRecord.MountId, records) ||
+                !IsContainedPath(canonicalPath, record.MountPoint, true)
+            )
+                continue;
+            paths.Add(LinuxBackingCoordinate(record.DeviceMajor, record.DeviceMinor, record.Root));
+            if (paths.Count > MaximumBackingTreePaths)
+                throw new InvalidOperationException(
+                    "Host recursive mount topology exceeds the supported bound."
+                );
+        }
+        string[] visiblePaths = new string[paths.Count];
+        paths.CopyTo(visiblePaths);
+        Array.Sort(visiblePaths, StringComparer.Ordinal);
+        return new LinuxBackingTree { DirectPath = directPath, Paths = visiblePaths };
     }
 
     public static OimsForgePathSnapshot Capture(string path)
@@ -333,6 +463,7 @@ public static class OimsForgePathIdentity
                     identity,
                     identity,
                     canonicalPath.ToString(),
+                    new[] { canonicalPath.ToString() },
                     canonicalPath.ToString(),
                     path,
                     handle
@@ -396,10 +527,12 @@ public static class OimsForgePathIdentity
                     Environment.ProcessId,
                     fileDescriptor
                 );
+                LinuxBackingTree backingTree = LinuxBackingTreePaths(buffer, canonicalPath);
                 return new OimsForgePathSnapshot(
                     identity,
                     backingIdentity,
-                    LinuxBackingTreePath(buffer, canonicalPath),
+                    backingTree.DirectPath,
+                    backingTree.Paths,
                     canonicalPath,
                     boundPath,
                     fileDescriptor
@@ -407,7 +540,9 @@ public static class OimsForgePathIdentity
             }
             catch
             {
-                new OimsForgePathSnapshot("", "", "", "", "", fileDescriptor).Dispose();
+                new OimsForgePathSnapshot(
+                    "", "", "", new string[0], "", "", fileDescriptor
+                ).Dispose();
                 throw;
             }
         }
@@ -435,17 +570,24 @@ function Assert-ForgeHostMountIdentity {
         $CurrentSnapshot = $null
         try {
             $CurrentSnapshot = Get-ForgePathSnapshot $CurrentPath
+            $BackingTreeDifference = @(
+                Compare-Object `
+                    -ReferenceObject @($ExpectedSnapshot.BackingTreePaths) `
+                    -DifferenceObject @($CurrentSnapshot.BackingTreePaths) `
+                    -CaseSensitive
+            )
             if (
                 $CurrentPath -cne $ExpectedPath -or
                 [string]$CurrentSnapshot.Identity -cne [string]$ExpectedSnapshot.Identity -or
                 [string]$CurrentSnapshot.BackingTreePath -cne `
                     [string]$ExpectedSnapshot.BackingTreePath -or
+                $BackingTreeDifference.Count -ne 0 -or
                 [string]$CurrentSnapshot.CanonicalPath -cne [string]$ExpectedSnapshot.CanonicalPath
             ) {
                 throw "Model Forge host mount identity changed before container launch: $Name"
             }
             $CurrentCanonicalPaths[$Name] = [string]$CurrentSnapshot.CanonicalPath
-            $CurrentBackingTreePaths[$Name] = [string]$CurrentSnapshot.BackingTreePath
+            $CurrentBackingTreePaths[$Name] = @($CurrentSnapshot.BackingTreePaths)
             $BoundPaths[$Name] = [string]$ExpectedSnapshot.BoundPath
         }
         finally {
@@ -462,9 +604,9 @@ function Assert-ForgeHostMountIdentity {
             throw 'OutputDir must not share a backing filesystem object with a protected input.'
         }
         if (
-            Test-PathsOverlap `
-                -Left $CurrentBackingTreePaths['Output'] `
-                -Right $CurrentBackingTreePaths[$ProtectedName]
+            Test-BackingTreeSetsOverlap `
+                -Left @($CurrentBackingTreePaths['Output']) `
+                -Right @($CurrentBackingTreePaths[$ProtectedName])
         ) {
             throw 'OutputDir backing tree must remain disjoint from protected inputs.'
         }

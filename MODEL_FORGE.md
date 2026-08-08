@@ -186,9 +186,10 @@ three host directories, then re-resolves and rechecks both those snapshots after
 Output/input disjointness is recomputed from the current canonical paths immediately before
 execution. Exact backing device/inode identity and component-safe backing-tree coordinates derived
 from the kernel mount ID, mount root, and path within that mount are compared independently of the
-visible Linux mountpoint, so equal, ancestor, and descendant aliases through distinct bind mounts
-all fail closed. Moving an identity-preserving object behind a symlink or junction therefore fails
-as well. It
+visible Linux mountpoint. The coordinate set follows authenticated mount-parent relationships and
+includes every nested filesystem recursively visible beneath each source, so equal, ancestor,
+descendant, and cross-submount aliases through distinct bind mounts all fail closed. Moving an
+identity-preserving object behind a symlink or junction therefore fails as well. It
 then rebinds every Linux mount source to the held launcher's `/proc/<pid>/fd/<fd>` object; on
 Windows, non-delete-sharing filesystem handles retain the verified names until Compose returns.
 Those leases close the final check-to-bind race. The launcher executes that exact rendered snapshot

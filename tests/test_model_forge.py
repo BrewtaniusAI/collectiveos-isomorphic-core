@@ -2496,16 +2496,34 @@ def test_launcher_binds_case_sensitive_mount_paths_and_revalidates_identity() ->
 def test_launcher_rejects_ancestor_and_descendant_backing_bind_aliases() -> None:
     launcher = (ROOT / "scripts" / "run_model_forge.ps1").read_text(encoding="utf-8")
 
-    assert "LinuxBackingTreePath" in launcher
+    assert "LinuxBackingTreePaths" in launcher
     assert '"/proc/self/mountinfo"' in launcher
-    assert "mountId != buffer.MountId" in launcher
-    assert "Path.GetRelativePath(mountPoint, canonicalPath)" in launcher
-    assert "Path.Combine(mountRoot, relative)" in launcher
+    assert "records.TryGetValue(buffer.MountId, out directRecord)" in launcher
+    assert "Path.GetRelativePath(directRecord.MountPoint, canonicalPath)" in launcher
+    assert "Path.Combine(directRecord.Root, relative)" in launcher
     assert '"/oims-forge-backing/linux-{0:x8}-{1:x8}"' in launcher
     assert "$CurrentSnapshot.BackingTreePath -cne" in launcher
-    assert "-Left $CurrentBackingTreePaths['Output']" in launcher
-    assert "-Right $CurrentBackingTreePaths[$ProtectedName]" in launcher
+    assert "Test-BackingTreeSetsOverlap" in launcher
+    assert "-Left @($CurrentBackingTreePaths['Output'])" in launcher
+    assert "-Right @($CurrentBackingTreePaths[$ProtectedName])" in launcher
     assert "backing tree must remain disjoint" in launcher
+
+
+def test_launcher_rejects_backing_aliases_across_nested_submounts() -> None:
+    launcher = (ROOT / "scripts" / "run_model_forge.ps1").read_text(encoding="utf-8")
+
+    assert "public ulong ParentId" in launcher
+    assert "IsMountDescendant" in launcher
+    assert "current.ParentId == ancestorId" in launcher
+    assert "IsContainedPath(canonicalPath, record.MountPoint, true)" in launcher
+    assert "LinuxBackingCoordinate(record.DeviceMajor, record.DeviceMinor, record.Root)" in launcher
+    assert "public string[] BackingTreePaths" in launcher
+    assert "MaximumBackingTreePaths" in launcher
+    assert "paths.Count > MaximumBackingTreePaths" in launcher
+    assert "Compare-Object" in launcher
+    assert "$BackingTreeDifference.Count -ne 0" in launcher
+    assert "foreach ($LeftPath in $Left)" in launcher
+    assert "foreach ($RightPath in $Right)" in launcher
 
 
 def test_launcher_executes_validated_snapshot_without_ambient_mode_inputs() -> None:
