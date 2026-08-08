@@ -65,9 +65,10 @@ python -m oims forge simulate `
   --output artifacts/model-forge
 ```
 
-The direct simulation path also requires either the launcher-injected source commit or a clean Git
-working tree. It refuses before creating the run directory when executed from dirty or unprovable
-source, preventing receipts from attributing modified code to a clean `HEAD`.
+The direct simulation path requires either a launcher-built image with a matching read-only source
+commit/tree attestation or a clean Git working tree whose commit and tree can both be resolved. It
+refuses before creating the run directory when executed from dirty or unprovable source, preventing
+receipts from attributing modified code to a clean `HEAD`.
 
 Verify the returned receipt and every linked telemetry/checkpoint/candidate artifact:
 
@@ -78,7 +79,9 @@ python -m oims forge verify `
 
 The simulation writes no `adapter_config.json` or `adapter_model.safetensors`. Its candidate is
 named `synthetic-candidate.json` and contains explicit `not_a_model`, `not_a_peft_adapter`, and
-`qmf_admissible: false` boundaries.
+`qmf_admissible: false` boundaries. Simulation plans are capped at 4,096 steps and 64 MiB of
+evidence. Before writing, the runtime serializes and meters the plan, telemetry, checkpoints,
+candidate, and sealed receipt; verification independently sums those files and rejects any mismatch.
 
 ## OCI / WSL2 environment
 
@@ -95,9 +98,9 @@ The Compose environment is hardened independently of the Python validator:
 - `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`, and `HF_DATASETS_OFFLINE=1`.
 
 Docker Compose requires an image reference pinned by digest. It intentionally refuses an implicit
-floating base tag. The launcher also derives an exact lowercase source commit (or accepts
-`-SourceCommit`) and injects it into the image so receipts retain provenance even though `.git`
-is excluded from the build context:
+floating base tag. The launcher also derives an exact lowercase source commit and tree (or accepts
+`-SourceCommit`) and embeds a read-only attestation in the image so receipts retain provenance even
+though `.git` is excluded from the build context:
 
 ```powershell
 .\scripts\run_model_forge.ps1 `
@@ -115,7 +118,9 @@ image and every downloaded training wheel before the `train` state can be introd
 
 The launcher requires Git, verifies that `-SourceCommit` (when supplied) equals `HEAD`, refuses any
 tracked or untracked working-tree change, and uses `git archive` to construct a temporary Docker
-context from that exact commit. Compose refuses a working-tree context. This keeps the commit
+context from that exact commit. It records the exported commit and Git tree in an attestation that
+the image moves outside `/workspace`; the non-root runtime must match both values before using the
+container provenance shortcut. Compose refuses a working-tree context. This keeps the source
 recorded in Forge receipts bound to the exact source copied into the image.
 
 Docker documents GPU reservations through `deploy.resources.reservations.devices`; the Forge

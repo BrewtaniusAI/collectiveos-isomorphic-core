@@ -41,6 +41,7 @@
     "governance_route",
     "limitations",
     "source_commit",
+    "source_tree",
     "record_sha256"
   ],
   "properties": {
@@ -87,12 +88,8 @@
         "this receipt cannot satisfy a QMF model-training-run contract"
       ]
     },
-    "source_commit": {
-      "oneOf": [
-        {"type": "null"},
-        {"type": "string", "pattern": "^[0-9a-f]{40}$"}
-      ]
-    },
+    "source_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "source_tree": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
     "record_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
   },
   "additionalProperties": false,

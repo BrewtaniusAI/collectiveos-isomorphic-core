@@ -7,6 +7,7 @@ x-forge-common: &forge-common
     args:
       FORGE_BASE_IMAGE: ${FORGE_BASE_IMAGE:?set FORGE_BASE_IMAGE to an immutable image@sha256 digest}
       FORGE_SOURCE_COMMIT: ${FORGE_SOURCE_COMMIT:?set FORGE_SOURCE_COMMIT to the exact source commit}
+      FORGE_SOURCE_TREE: ${FORGE_SOURCE_TREE:?set FORGE_SOURCE_TREE to the exact source tree}
   image: collective-model-forge:${FORGE_IMAGE_TAG:-local}
   network_mode: none
   read_only: true
@@ -25,6 +26,7 @@ x-forge-common: &forge-common
     OIMS_FORGE_CONTAINER: "1"
     OIMS_FORGE_BASE_IMAGE: ${FORGE_BASE_IMAGE:?set FORGE_BASE_IMAGE to an immutable image@sha256 digest}
     OIMS_FORGE_SOURCE_COMMIT: ${FORGE_SOURCE_COMMIT:?set FORGE_SOURCE_COMMIT to the exact source commit}
+    OIMS_FORGE_SOURCE_TREE: ${FORGE_SOURCE_TREE:?set FORGE_SOURCE_TREE to the exact source tree}
   tmpfs:
     - /tmp:size=1073741824,mode=1777
   volumes:
@@ -67,6 +69,7 @@ services:
       OIMS_FORGE_ENABLE_PROBE: "1"
       OIMS_FORGE_BASE_IMAGE: ${FORGE_BASE_IMAGE:?set FORGE_BASE_IMAGE to an immutable image@sha256 digest}
       OIMS_FORGE_SOURCE_COMMIT: ${FORGE_SOURCE_COMMIT:?set FORGE_SOURCE_COMMIT to the exact source commit}
+      OIMS_FORGE_SOURCE_TREE: ${FORGE_SOURCE_TREE:?set FORGE_SOURCE_TREE to the exact source tree}
     deploy:
       resources:
         reservations:

@@ -35,7 +35,10 @@ QMF_DERIVATION_VERSION = "10.0.0"
 MAX_PLAN_BYTES = 1024 * 1024
 MAX_RECORD_BYTES = 1024 * 1024
 MAX_TELEMETRY_BYTES = 16 * 1024 * 1024
+MAX_SIMULATION_STEPS = 4096
+MAX_FORGE_OUTPUT_BYTES = 64 * 1024 * 1024
 DEFAULT_FORGE_ARTIFACTS_DIR = ROOT / "artifacts" / "model-forge"
+SOURCE_ATTESTATION_PATH = Path("/usr/local/share/oims-forge/source.attestation")
 GPT_OSS_20B_REPOSITORY = "openai/gpt-oss-20b"
 GPT_OSS_20B_REVISION = "6cee5e81ee83917806bbde320786a8fb61efebee"
 QMF_DIGEST_LENGTH = 71
@@ -194,6 +197,7 @@ RUN_RECEIPT_KEYS = {
     "governance_route",
     "limitations",
     "source_commit",
+    "source_tree",
     "record_sha256",
 }
 SYNTHETIC_CHECKPOINT_KEYS = {
@@ -298,6 +302,12 @@ def _atomic_write_text(path: Path, text: str) -> None:
         raise
 
 
+def _json_artifact_bytes(value: Any) -> bytes:
+    return (
+        json.dumps(value, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
+    ).encode("utf-8")
+
+
 def _is_int(value: object, *, minimum: int = 0) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= minimum
 
@@ -351,6 +361,39 @@ def _is_immutable_image_ref(value: object) -> bool:
     )
 
 
+def _read_source_attestation(
+    path: Path = SOURCE_ATTESTATION_PATH,
+) -> tuple[str, str] | None:
+    try:
+        if path.stat().st_size > 256:
+            return None
+        lines = path.read_text(encoding="ascii").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return None
+    values: dict[str, str] = {}
+    for line in lines:
+        key, separator, value = line.partition("=")
+        if not separator or key in values:
+            return None
+        values[key] = value
+    if set(values) != {"commit", "tree"}:
+        return None
+    commit = values["commit"]
+    tree = values["tree"]
+    return (commit, tree) if _is_revision(commit) and _is_revision(tree) else None
+
+
+def _container_source_attestation_errors(environment: dict[str, Any]) -> tuple[str, ...]:
+    commit = environment.get("OIMS_FORGE_SOURCE_COMMIT")
+    tree = environment.get("OIMS_FORGE_SOURCE_TREE")
+    attestation = _read_source_attestation()
+    if attestation is None:
+        return ("Forge image source attestation is missing or malformed",)
+    if attestation != (commit, tree):
+        return ("Forge image source attestation does not match the declared commit and tree",)
+    return ()
+
+
 def forge_container_environment_errors(
     environment: object = None,
     *,
@@ -377,6 +420,9 @@ def forge_container_environment_errors(
         errors.append("OIMS_FORGE_BASE_IMAGE is not pinned by an immutable SHA-256 digest")
     if not _is_revision(env.get("OIMS_FORGE_SOURCE_COMMIT")):
         errors.append("OIMS_FORGE_SOURCE_COMMIT is not an exact lowercase Git commit")
+    if not _is_revision(env.get("OIMS_FORGE_SOURCE_TREE")):
+        errors.append("OIMS_FORGE_SOURCE_TREE is not an exact lowercase Git tree")
+    errors.extend(_container_source_attestation_errors(env))
     return tuple(errors)
 
 
@@ -386,17 +432,12 @@ def _forge_source_commit(environment: dict[str, str] | None = None) -> str | Non
     return injected if _is_revision(injected) else current_git_commit(ROOT)
 
 
-def _verified_execution_source_commit(
+def _verified_execution_source(
     environment: dict[str, str] | None = None,
-) -> str | None:
+) -> tuple[str, str] | None:
     env = environment if environment is not None else dict(os.environ)
-    injected = env.get("OIMS_FORGE_SOURCE_COMMIT")
-    if (
-        _is_revision(injected)
-        and env.get("OIMS_FORGE_CONTAINER") == "1"
-        and not forge_container_environment_errors(env)
-    ):
-        return injected
+    if env.get("OIMS_FORGE_CONTAINER") == "1" and not forge_container_environment_errors(env):
+        return env["OIMS_FORGE_SOURCE_COMMIT"], env["OIMS_FORGE_SOURCE_TREE"]
     try:
         completed = subprocess.run(
             [
@@ -417,7 +458,20 @@ def _verified_execution_source_commit(
     if completed.stdout.strip():
         return None
     commit = current_git_commit(ROOT)
-    return commit if _is_revision(commit) else None
+    if not _is_revision(commit):
+        return None
+    try:
+        tree_result = subprocess.run(
+            ["git", "-C", str(ROOT), "rev-parse", f"{commit}^{{tree}}"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    tree = tree_result.stdout.strip()
+    return (commit, tree) if _is_revision(tree) else None
 
 
 def _strict_json_loads(text: str) -> object:
@@ -592,6 +646,13 @@ def validate_forge_plan(plan: object) -> tuple[str, ...]:
                 zero=field == "max_cost_microusd",
             )
         _check_exact(resources.get("allow_swap"), False, "resources.allow_swap", errors)
+        if _is_int(resources.get("max_steps")) and resources["max_steps"] > MAX_SIMULATION_STEPS:
+            errors.append(f"resources.max_steps exceeds {MAX_SIMULATION_STEPS}")
+        if (
+            _is_int(resources.get("max_output_bytes"))
+            and resources["max_output_bytes"] > MAX_FORGE_OUTPUT_BYTES
+        ):
+            errors.append(f"resources.max_output_bytes exceeds {MAX_FORGE_OUTPUT_BYTES}")
         domains = resources.get("memory_domains")
         capacities_by_kind: dict[str, list[int]] = {}
         if not isinstance(domains, list) or len(domains) != 2:
@@ -715,6 +776,8 @@ def validate_forge_plan(plan: object) -> tuple[str, ...]:
                 errors.append("simulation.synthetic_loss_millionths is invalid")
             elif losses != sorted(losses, reverse=True):
                 errors.append("simulation synthetic loss must be monotonic for the fixture")
+            if isinstance(losses, list) and len(losses) > MAX_SIMULATION_STEPS:
+                errors.append(f"simulation steps exceed {MAX_SIMULATION_STEPS}")
             if isinstance(losses, list) and sim.get("steps") != len(losses):
                 errors.append("simulation step count does not match synthetic loss observations")
             if isinstance(resources, dict):
@@ -832,27 +895,22 @@ def simulate_forge_run(
         raise ForgePlanError("; ".join(errors))
     if plan["mode"] != "simulate":
         raise ForgePlanError("only a simulate plan can enter the simulation lane")
-    source_commit = _verified_execution_source_commit()
-    if source_commit is None:
+    provenance = _verified_execution_source()
+    if provenance is None:
         raise ForgePlanError(
-            "Forge simulation requires an injected source commit or a clean Git working tree"
+            "Forge simulation requires an attested container source or a clean Git working tree"
         )
+    source_commit, source_tree = provenance
 
     plan_hash = plan["plan_hash"]
     run_id = f"sim-{plan_hash.removeprefix('sha256:')[:16]}"
-    run_dir = _safe_run_directory(artifacts_dir, run_id)
-    checkpoint_dir = run_dir / "checkpoints"
-    candidate_dir = run_dir / "candidate"
-    checkpoint_dir.mkdir(parents=True)
-    candidate_dir.mkdir(parents=True)
-    atomic_write_json(run_dir / "plan.json", plan)
-
     simulation = plan["simulation"]
     started = _parse_timestamp(simulation["clock_start"])
     if started is None:  # guarded by validation; keeps type checkers and callers honest
         raise ForgePlanError("simulation clock is invalid")
     step_duration = simulation["step_duration_seconds"]
     telemetry: list[dict[str, Any]] = []
+    checkpoints: list[dict[str, Any]] = []
     checkpoint_hashes: list[str] = []
     previous: str | None = None
     for step, synthetic_loss in enumerate(simulation["synthetic_loss_millionths"], start=1):
@@ -871,8 +929,7 @@ def simulate_forge_run(
         }
         checkpoint = dict(checkpoint_body)
         checkpoint["checkpoint_hash"] = qmf_digest(checkpoint_body)
-        checkpoint_path = checkpoint_dir / f"step-{step:06d}.json"
-        atomic_write_json(checkpoint_path, checkpoint)
+        checkpoints.append(checkpoint)
         previous = checkpoint["checkpoint_hash"]
         checkpoint_hashes.append(previous)
         telemetry.append(
@@ -892,11 +949,11 @@ def simulate_forge_run(
             }
         )
 
-    telemetry_path = run_dir / "telemetry.jsonl"
-    _atomic_write_text(
-        telemetry_path,
-        "".join(qmf_canonical_json(event) + "\n" for event in telemetry),
-    )
+    telemetry_bytes = "".join(
+        qmf_canonical_json(event) + "\n" for event in telemetry
+    ).encode("ascii")
+    if len(telemetry_bytes) > MAX_TELEMETRY_BYTES:
+        raise ForgePlanError(f"Forge telemetry exceeds {MAX_TELEMETRY_BYTES} bytes")
     candidate_body = {
         "schema_version": FORGE_SCHEMA_VERSION,
         "run_id": run_id,
@@ -910,9 +967,6 @@ def simulate_forge_run(
     }
     candidate = dict(candidate_body)
     candidate["candidate_hash"] = qmf_digest(candidate_body)
-    candidate_path = candidate_dir / "synthetic-candidate.json"
-    atomic_write_json(candidate_path, candidate)
-
     completed = started + timedelta(seconds=simulation["steps"] * step_duration)
     receipt = {
         "@context": "https://oims.collective-osp.org/model-forge/v1",
@@ -932,7 +986,7 @@ def simulate_forge_run(
         "completed_at": completed.isoformat(),
         "steps": simulation["steps"],
         "input_tokens": simulation["steps"] * simulation["input_tokens_per_step"],
-        "output_bytes": simulation["steps"] * simulation["output_bytes_per_checkpoint"],
+        "output_bytes": 0,
         "duration_seconds": simulation["steps"] * step_duration,
         "peak_host_bytes": simulation["peak_host_bytes"],
         "peak_device_bytes": simulation["peak_device_bytes"],
@@ -942,7 +996,7 @@ def simulate_forge_run(
         "network_mode": "none",
         "swap_used": False,
         "telemetry_file": "telemetry.jsonl",
-        "telemetry_hash": prefixed_file_digest(telemetry_path),
+        "telemetry_hash": "sha256:" + hashlib.sha256(telemetry_bytes).hexdigest(),
         "checkpoint_directory": "checkpoints",
         "checkpoint_count": len(checkpoint_hashes),
         "checkpoint_chain_head": previous,
@@ -952,8 +1006,38 @@ def simulate_forge_run(
         "governance_route": GOVERNANCE_ROUTE,
         "limitations": SIMULATION_LIMITATIONS,
         "source_commit": source_commit,
+        "source_tree": source_tree,
     }
-    sealed = seal_record(receipt)
+    fixed_evidence_bytes = (
+        len(_json_artifact_bytes(plan))
+        + sum(len(_json_artifact_bytes(checkpoint)) for checkpoint in checkpoints)
+        + len(telemetry_bytes)
+        + len(_json_artifact_bytes(candidate))
+    )
+    sealed: dict[str, Any] | None = None
+    for _ in range(8):
+        sealed = seal_record(receipt)
+        actual_output_bytes = fixed_evidence_bytes + len(_json_artifact_bytes(sealed))
+        if receipt["output_bytes"] == actual_output_bytes:
+            break
+        receipt["output_bytes"] = actual_output_bytes
+    else:
+        raise ForgePlanError("Forge evidence byte metering did not converge")
+    if sealed is None:  # defensive; the bounded loop always executes
+        raise ForgePlanError("Forge evidence receipt could not be sealed")
+    if receipt["output_bytes"] > plan["resources"]["max_output_bytes"]:
+        raise ForgePlanError("serialized Forge evidence exceeds the output byte budget")
+
+    run_dir = _safe_run_directory(artifacts_dir, run_id)
+    checkpoint_dir = run_dir / "checkpoints"
+    candidate_dir = run_dir / "candidate"
+    checkpoint_dir.mkdir(parents=True)
+    candidate_dir.mkdir(parents=True)
+    atomic_write_json(run_dir / "plan.json", plan)
+    for step, checkpoint in enumerate(checkpoints, start=1):
+        atomic_write_json(checkpoint_dir / f"step-{step:06d}.json", checkpoint)
+    _atomic_write_text(run_dir / "telemetry.jsonl", telemetry_bytes.decode("ascii"))
+    atomic_write_json(candidate_dir / "synthetic-candidate.json", candidate)
     atomic_write_json(run_dir / "receipt.json", sealed)
     return sealed
 
@@ -1051,7 +1135,6 @@ def verify_forge_run(receipt_path: Path | str) -> dict[str, Any]:
                 "completed_at": completed.isoformat(),
                 "steps": simulation["steps"],
                 "input_tokens": simulation["steps"] * simulation["input_tokens_per_step"],
-                "output_bytes": simulation["steps"] * simulation["output_bytes_per_checkpoint"],
                 "duration_seconds": simulation["steps"] * simulation["step_duration_seconds"],
                 "peak_host_bytes": simulation["peak_host_bytes"],
                 "peak_device_bytes": simulation["peak_device_bytes"],
@@ -1066,8 +1149,11 @@ def verify_forge_run(receipt_path: Path | str) -> dict[str, Any]:
                     errors.append(f"Forge receipt field {field} failed semantic replay")
 
     source_commit = receipt.get("source_commit")
-    if source_commit is not None and not _is_revision(source_commit):
+    source_tree = receipt.get("source_tree")
+    if not _is_revision(source_commit):
         errors.append("Forge receipt source_commit is invalid")
+    if not _is_revision(source_tree):
+        errors.append("Forge receipt source_tree is invalid")
 
     telemetry_path = run_dir / str(receipt.get("telemetry_file", ""))
     telemetry_bytes: bytes | None = None
@@ -1209,6 +1295,28 @@ def verify_forge_run(receipt_path: Path | str) -> dict[str, Any]:
                 }
                 if candidate != expected_candidate:
                     errors.append("Forge synthetic candidate failed semantic replay")
+
+    metered_paths = [
+        path,
+        run_dir / "plan.json",
+        run_dir / "telemetry.jsonl",
+        run_dir / "candidate" / "synthetic-candidate.json",
+        *checkpoints,
+    ]
+    actual_output_bytes: int | None = None
+    if any(item.is_symlink() or not item.is_file() for item in metered_paths):
+        errors.append("serialized Forge evidence contains a non-regular artifact")
+    else:
+        try:
+            actual_output_bytes = sum(item.stat().st_size for item in metered_paths)
+        except OSError as exc:
+            errors.append(f"cannot meter serialized Forge evidence: {exc}")
+            actual_output_bytes = None
+    if actual_output_bytes is not None:
+        if receipt.get("output_bytes") != actual_output_bytes:
+            errors.append("Forge receipt output_bytes does not match serialized evidence")
+        if plan_valid and actual_output_bytes > plan["resources"]["max_output_bytes"]:
+            errors.append("serialized Forge evidence exceeds the output byte budget")
     return {
         "valid": not errors,
         "receipt_path": str(path),
@@ -1534,6 +1642,15 @@ def inspect_physical_preflight(
         "gpu": gpu,
         "errors": errors,
         "governance_route": GOVERNANCE_ROUTE,
-        "source_commit": _forge_source_commit(env),
+        "source_commit": (
+            env.get("OIMS_FORGE_SOURCE_COMMIT")
+            if _is_revision(env.get("OIMS_FORGE_SOURCE_COMMIT"))
+            else None
+        ),
+        "source_tree": (
+            env.get("OIMS_FORGE_SOURCE_TREE")
+            if _is_revision(env.get("OIMS_FORGE_SOURCE_TREE"))
+            else None
+        ),
     }
     return seal_record(receipt)

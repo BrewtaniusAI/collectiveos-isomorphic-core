@@ -55,6 +55,10 @@ $SourceCommit = $HeadCommit
 if ($SourceCommit -notmatch '^[0-9a-f]{40}$') {
     throw 'SourceCommit must be an exact 40-character lowercase Git commit.'
 }
+$SourceTree = (& git -C $RepositoryRoot rev-parse "${SourceCommit}^{tree}").Trim()
+if ($LASTEXITCODE -ne 0 -or $SourceTree -notmatch '^[0-9a-f]{40}$') {
+    throw 'Could not resolve the exact Model Forge source tree.'
+}
 $DirtyState = @(& git -C $RepositoryRoot status --porcelain=v1 --untracked-files=all)
 if ($LASTEXITCODE -ne 0) {
     throw "Could not verify the Model Forge build context (exit $LASTEXITCODE)."
@@ -79,6 +83,7 @@ $EnvironmentNames = @(
     'FORGE_BASE_IMAGE',
     'FORGE_BUILD_CONTEXT',
     'FORGE_SOURCE_COMMIT',
+    'FORGE_SOURCE_TREE',
     'FORGE_PLAN',
     'FORGE_BASE_MODEL_DIR',
     'FORGE_DATASET_DIR',
@@ -110,10 +115,17 @@ try {
     }
     Remove-Item -LiteralPath $ArchivePath -Force
     $ArchivePath = $null
+    @(
+        "commit=$SourceCommit"
+        "tree=$SourceTree"
+    ) | Set-Content `
+        -LiteralPath (Join-Path $BuildContext '.oims-forge-source.attestation') `
+        -Encoding ascii
 
     $env:FORGE_BASE_IMAGE = $BaseImage
     $env:FORGE_BUILD_CONTEXT = $BuildContext
     $env:FORGE_SOURCE_COMMIT = $SourceCommit
+    $env:FORGE_SOURCE_TREE = $SourceTree
     $env:FORGE_PLAN = $PlanPath
     $env:FORGE_BASE_MODEL_DIR = (Resolve-Path -LiteralPath $BaseModelDir).Path
     $env:FORGE_DATASET_DIR = (Resolve-Path -LiteralPath $DatasetDir).Path

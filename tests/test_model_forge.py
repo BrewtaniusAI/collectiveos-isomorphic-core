@@ -155,6 +155,8 @@ def test_simulation_emits_verifiable_non_model_evidence(tmp_path: Path) -> None:
     assert candidate["not_a_model"] is True
     assert candidate["not_a_peft_adapter"] is True
     assert candidate["qmf_admissible"] is False
+    evidence_files = [path for path in run_dir.rglob("*") if path.is_file()]
+    assert receipt["output_bytes"] == sum(path.stat().st_size for path in evidence_files)
 
 
 def test_simulation_refuses_to_overwrite_an_existing_run(tmp_path: Path) -> None:
@@ -204,6 +206,21 @@ def test_resealed_forged_telemetry_still_fails_semantic_replay(tmp_path: Path) -
     assert "Forge telemetry failed semantic replay" in result["errors"]
 
 
+@pytest.mark.parametrize("field", ["source_commit", "source_tree"])
+def test_resealed_receipt_cannot_drop_source_provenance(
+    tmp_path: Path,
+    field: str,
+) -> None:
+    receipt = simulate_forge_run(load_example(), artifacts_dir=tmp_path)
+    run_dir = tmp_path / receipt["run_id"]
+    receipt[field] = None
+    receipt = seal_record(receipt)
+    (run_dir / "receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
+    result = verify_forge_run(run_dir / "receipt.json")
+    assert result["valid"] is False
+    assert f"Forge receipt {field} is invalid" in result["errors"]
+
+
 def test_probe_requires_exact_dual_unlock_before_device_inspection() -> None:
     plan = probe_plan()
     with (
@@ -233,6 +250,7 @@ def test_probe_can_prove_a_locked_4090_sandbox_without_training() -> None:
         "HF_DATASETS_OFFLINE": "1",
         "OIMS_FORGE_BASE_IMAGE": "python:3.12-slim@sha256:" + "a" * 64,
         "OIMS_FORGE_SOURCE_COMMIT": "a" * 40,
+        "OIMS_FORGE_SOURCE_TREE": "b" * 40,
     }
     completed = subprocess.CompletedProcess(
         args=["nvidia-smi"],
@@ -284,6 +302,7 @@ def test_probe_can_prove_a_locked_4090_sandbox_without_training() -> None:
             },
         ),
         patch("oims.model_forge.os.geteuid", return_value=65532),
+        patch("oims.model_forge._container_source_attestation_errors", return_value=()),
         patch("oims.model_forge.current_git_commit", return_value="a" * 40),
         patch("oims.model_forge.subprocess.run", return_value=completed) as run,
     ):
@@ -408,7 +427,15 @@ def test_direct_simulation_refuses_dirty_source_before_writing(tmp_path: Path) -
     with (
         patch.dict(
             "oims.model_forge.os.environ",
-            {"OIMS_FORGE_SOURCE_COMMIT": "a" * 40},
+            {
+                "OIMS_FORGE_CONTAINER": "1",
+                "HF_HUB_OFFLINE": "1",
+                "TRANSFORMERS_OFFLINE": "1",
+                "HF_DATASETS_OFFLINE": "1",
+                "OIMS_FORGE_BASE_IMAGE": "python:3.12-slim@sha256:" + "a" * 64,
+                "OIMS_FORGE_SOURCE_COMMIT": "a" * 40,
+                "OIMS_FORGE_SOURCE_TREE": "b" * 40,
+            },
             clear=True,
         ),
         patch("oims.model_forge.subprocess.run", return_value=dirty),
@@ -428,6 +455,7 @@ def test_probe_requires_current_host_memory_headroom() -> None:
         "HF_DATASETS_OFFLINE": "1",
         "OIMS_FORGE_BASE_IMAGE": "python:3.12-slim@sha256:" + "a" * 64,
         "OIMS_FORGE_SOURCE_COMMIT": "a" * 40,
+        "OIMS_FORGE_SOURCE_TREE": "b" * 40,
     }
     with (
         patch(
@@ -466,6 +494,7 @@ def test_probe_requires_current_host_memory_headroom() -> None:
             },
         ),
         patch("oims.model_forge.os.geteuid", return_value=65532),
+        patch("oims.model_forge._container_source_attestation_errors", return_value=()),
         patch("oims.model_forge.current_git_commit", return_value="a" * 40),
         patch("oims.model_forge.subprocess.run") as run,
     ):
@@ -489,6 +518,7 @@ def test_probe_requires_process_level_output_write() -> None:
         "HF_DATASETS_OFFLINE": "1",
         "OIMS_FORGE_BASE_IMAGE": "python:3.12-slim@sha256:" + "a" * 64,
         "OIMS_FORGE_SOURCE_COMMIT": "a" * 40,
+        "OIMS_FORGE_SOURCE_TREE": "b" * 40,
     }
     with (
         patch(
@@ -527,6 +557,7 @@ def test_probe_requires_process_level_output_write() -> None:
             },
         ),
         patch("oims.model_forge.os.geteuid", return_value=65532),
+        patch("oims.model_forge._container_source_attestation_errors", return_value=()),
         patch("oims.model_forge.current_git_commit", return_value="a" * 40),
         patch("oims.model_forge.subprocess.run") as run,
     ):
@@ -602,6 +633,33 @@ def test_simulation_duration_output_and_checkpoint_budgets_are_enforced() -> Non
     assert "simulation checkpoints.retain_last must preserve the full chain" in errors
 
 
+def test_simulation_meters_serialized_evidence_before_writing(tmp_path: Path) -> None:
+    plan = load_example()
+    resources = plan["resources"]
+    assert isinstance(resources, dict)
+    resources["max_output_bytes"] = 3000
+    rehash(plan)
+    assert "simulation output bytes exceed the resource budget" not in validate_forge_plan(plan)
+    with pytest.raises(ForgePlanError, match="serialized Forge evidence"):
+        simulate_forge_run(plan, artifacts_dir=tmp_path)
+    assert not list(tmp_path.iterdir())
+
+
+def test_simulation_step_count_has_a_global_evidence_bound() -> None:
+    plan = load_example()
+    resources = plan["resources"]
+    simulation = plan["simulation"]
+    assert isinstance(resources, dict)
+    assert isinstance(simulation, dict)
+    resources["max_steps"] = 4097
+    simulation["steps"] = 4097
+    simulation["synthetic_loss_millionths"] = list(range(4097, 0, -1))
+    rehash(plan)
+    errors = validate_forge_plan(plan)
+    assert "resources.max_steps exceeds 4096" in errors
+    assert "simulation steps exceed 4096" in errors
+
+
 def test_plan_loader_refuses_duplicate_fields_and_non_finite_numbers(tmp_path: Path) -> None:
     duplicate = tmp_path / "duplicate.json"
     duplicate.write_text('{"schema_version":"1.0.0","schema_version":"1.0.0"}', encoding="utf-8")
@@ -615,17 +673,44 @@ def test_plan_loader_refuses_duplicate_fields_and_non_finite_numbers(tmp_path: P
 
 
 def test_container_execution_requires_offline_flags_and_immutable_base_image() -> None:
-    errors = forge_container_environment_errors(
-        {
-            "OIMS_FORGE_CONTAINER": "1",
-            "HF_HUB_OFFLINE": "1",
-            "TRANSFORMERS_OFFLINE": "1",
-            "HF_DATASETS_OFFLINE": "1",
-            "OIMS_FORGE_BASE_IMAGE": "python:latest",
-            "OIMS_FORGE_SOURCE_COMMIT": "a" * 40,
-        }
-    )
+    with patch("oims.model_forge._container_source_attestation_errors", return_value=()):
+        errors = forge_container_environment_errors(
+            {
+                "OIMS_FORGE_CONTAINER": "1",
+                "HF_HUB_OFFLINE": "1",
+                "TRANSFORMERS_OFFLINE": "1",
+                "HF_DATASETS_OFFLINE": "1",
+                "OIMS_FORGE_BASE_IMAGE": "python:latest",
+                "OIMS_FORGE_SOURCE_COMMIT": "a" * 40,
+                "OIMS_FORGE_SOURCE_TREE": "b" * 40,
+            }
+        )
     assert errors == ("OIMS_FORGE_BASE_IMAGE is not pinned by an immutable SHA-256 digest",)
+
+
+def test_container_source_shortcut_requires_matching_image_attestation() -> None:
+    environment = {
+        "OIMS_FORGE_CONTAINER": "1",
+        "HF_HUB_OFFLINE": "1",
+        "TRANSFORMERS_OFFLINE": "1",
+        "HF_DATASETS_OFFLINE": "1",
+        "OIMS_FORGE_BASE_IMAGE": "python:3.12-slim@sha256:" + "a" * 64,
+        "OIMS_FORGE_SOURCE_COMMIT": "a" * 40,
+        "OIMS_FORGE_SOURCE_TREE": "b" * 40,
+    }
+    with patch(
+        "oims.model_forge._read_source_attestation",
+        return_value=("a" * 40, "b" * 40),
+    ):
+        assert forge_container_environment_errors(environment) == ()
+    with patch(
+        "oims.model_forge._read_source_attestation",
+        return_value=("c" * 40, "d" * 40),
+    ):
+        errors = forge_container_environment_errors(environment)
+    assert errors == (
+        "Forge image source attestation does not match the declared commit and tree",
+    )
 
 
 def test_oci_boundary_is_offline_unprivileged_and_non_training() -> None:
@@ -641,6 +726,9 @@ def test_oci_boundary_is_offline_unprivileged_and_non_training() -> None:
         assert service["environment"]["OIMS_FORGE_BASE_IMAGE"].startswith("${FORGE_BASE_IMAGE:")
         assert service["environment"]["OIMS_FORGE_SOURCE_COMMIT"].startswith(
             "${FORGE_SOURCE_COMMIT:"
+        )
+        assert service["environment"]["OIMS_FORGE_SOURCE_TREE"].startswith(
+            "${FORGE_SOURCE_TREE:"
         )
         assert all(
             volume.get("read_only") is True
@@ -659,12 +747,14 @@ def test_oci_boundary_is_offline_unprivileged_and_non_training() -> None:
     containerfile = (ROOT / "forge" / "Containerfile").read_text(encoding="utf-8")
     assert "ARG FORGE_BASE_IMAGE\nFROM ${FORGE_BASE_IMAGE}" in containerfile
     assert "FROM python:" not in containerfile
+    assert "source.attestation" in containerfile
     launcher = (ROOT / "scripts" / "run_model_forge.ps1").read_text(encoding="utf-8")
     assert "status --porcelain=v1 --untracked-files=all" in launcher
     assert "archive --format=tar" in launcher
     assert "$env:FORGE_BUILD_CONTEXT = $BuildContext" in launcher
     assert "Model Forge refuses a dirty build context" in launcher
     assert "SourceCommit does not match the repository HEAD" in launcher
+    assert "$env:FORGE_SOURCE_TREE = $SourceTree" in launcher
     runtime_lock = (ROOT / "requirements" / "forge-runtime.lock").read_text(encoding="utf-8")
     assert "torch" not in runtime_lock.lower()
     assert "transformers" not in runtime_lock.lower()

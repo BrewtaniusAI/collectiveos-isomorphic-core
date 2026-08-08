@@ -2,6 +2,7 @@ ARG FORGE_BASE_IMAGE
 FROM ${FORGE_BASE_IMAGE}
 
 ARG FORGE_SOURCE_COMMIT
+ARG FORGE_SOURCE_TREE
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -10,12 +11,18 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     TRANSFORMERS_OFFLINE=1 \
     HF_DATASETS_OFFLINE=1 \
     OIMS_FORGE_CONTAINER=1 \
-    OIMS_FORGE_SOURCE_COMMIT=${FORGE_SOURCE_COMMIT}
+    OIMS_FORGE_SOURCE_COMMIT=${FORGE_SOURCE_COMMIT} \
+    OIMS_FORGE_SOURCE_TREE=${FORGE_SOURCE_TREE}
 
 WORKDIR /workspace
 COPY requirements/forge-runtime.lock /tmp/forge-runtime.lock
 RUN python -m pip install --no-cache-dir -r /tmp/forge-runtime.lock
 COPY . /workspace
+RUN test -f /workspace/.oims-forge-source.attestation \
+    && mkdir -p /usr/local/share/oims-forge \
+    && mv /workspace/.oims-forge-source.attestation \
+        /usr/local/share/oims-forge/source.attestation \
+    && chmod 0444 /usr/local/share/oims-forge/source.attestation
 RUN python -m pip install --no-cache-dir --no-deps .
 
 RUN mkdir -p /forge/output /forge/inputs/base /forge/inputs/dataset \

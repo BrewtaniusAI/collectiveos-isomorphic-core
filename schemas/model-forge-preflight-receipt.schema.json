@@ -23,6 +23,7 @@
     "errors",
     "governance_route",
     "source_commit",
+    "source_tree",
     "record_sha256"
   ],
   "properties": {
@@ -165,6 +166,12 @@
         {"type": "string", "pattern": "^[0-9a-f]{40}$"}
       ]
     },
+    "source_tree": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+      ]
+    },
     "record_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
   },
   "additionalProperties": false,
@@ -176,6 +183,8 @@
           "status": {"const": "READY"},
           "errors": {"maxItems": 0},
           "gpu": {"type": "object"},
+          "source_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+          "source_tree": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
           "sandbox_observation": {
             "properties": {
               "effective_user_non_root": {"const": true},
