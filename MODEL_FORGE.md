@@ -83,6 +83,11 @@ The Compose environment is hardened independently of the Python validator:
 - one explicitly selected NVIDIA device for `probe`;
 - `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`, and `HF_DATASETS_OFFLINE=1`.
 
+Before a simulation can emit evidence, the pre-import entrypoint authenticates the proc, sysfs, and
+cgroup observation sources. The runtime then observes UID/GID 65532, empty capabilities,
+no-new-privileges, runtime-default seccomp, a read-only root, loopback-only networking, the exact
+Forge mount policy, unused and cgroup-disabled swap, a bounded memory cgroup, and at most 512 PIDs.
+
 Docker Compose requires an image reference pinned by digest. It intentionally refuses an implicit
 floating base tag. The launcher also derives an exact lowercase source commit and tree (or accepts
 `-SourceCommit`) and embeds a read-only attestation in the image so receipts retain provenance even

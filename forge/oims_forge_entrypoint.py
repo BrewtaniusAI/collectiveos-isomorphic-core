@@ -14,7 +14,7 @@ ATTESTATION_PATH = Path("/usr/local/share/oims-forge/source.attestation")
 NVIDIA_RUNTIME_APPROVALS_PATH = Path("/usr/local/share/oims-forge/nvidia-runtime.approved")
 MOUNTINFO_PATH = Path("/proc/self/mountinfo")
 PROCESS_MAPS_PATH = Path("/proc/self/maps")
-PROBE_OBSERVATION_PATHS = (
+SANDBOX_OBSERVATION_PATHS = (
     Path("/proc/self/mountinfo"),
     Path("/proc/self/maps"),
     Path("/proc/self/status"),
@@ -434,7 +434,7 @@ def _cgroup_membership(path: Path = Path("/proc/self/cgroup")) -> str | None:
     return "/" if lines == ["0::/"] else None
 
 
-def probe_observation_mount_errors(
+def sandbox_observation_mount_errors(
     records: tuple[MountRecord, ...],
     cgroup_membership: str | None,
 ) -> tuple[str, ...]:
@@ -445,9 +445,9 @@ def probe_observation_mount_errors(
             or root_records[0].filesystem_type not in expected_filesystems
             or root_records[0].root != Path("/")
         ):
-            return ("Forge physical-preflight observation filesystems cannot be verified",)
+            return ("Forge sandbox observation filesystems cannot be verified",)
     if cgroup_membership != "/":
-        return ("Forge physical-preflight cgroup membership cannot be verified",)
+        return ("Forge sandbox cgroup membership cannot be verified",)
     allowed_roots = set(OBSERVATION_ROOT_FILESYSTEMS)
     for record in records:
         mount = record.path
@@ -455,9 +455,9 @@ def probe_observation_mount_errors(
             continue
         if any(
             mount == target or mount in target.parents or target in mount.parents
-            for target in PROBE_OBSERVATION_PATHS
+            for target in SANDBOX_OBSERVATION_PATHS
         ):
-            return ("Forge physical-preflight observation sources contain an unexpected mount",)
+            return ("Forge sandbox observation sources contain an unexpected mount",)
     return ()
 
 
@@ -472,13 +472,13 @@ def protected_mount_errors(
     allowed_native_mounts: tuple[Path, ...] = (),
     nvidia_approvals_path: Path = NVIDIA_RUNTIME_APPROVALS_PATH,
     observed_mount_records: tuple[MountRecord, ...] | None = None,
-    protect_probe_observations: bool = False,
+    protect_sandbox_observations: bool = False,
     cgroup_membership: str | None = None,
 ) -> tuple[str, ...]:
-    if protect_probe_observations:
+    if protect_sandbox_observations:
         if observed_mount_records is None:
-            return ("Forge physical-preflight observation filesystems cannot be verified",)
-        observation_errors = probe_observation_mount_errors(
+            return ("Forge sandbox observation filesystems cannot be verified",)
+        observation_errors = sandbox_observation_mount_errors(
             observed_mount_records,
             cgroup_membership,
         )
@@ -536,7 +536,7 @@ def verify_installed_package(
     observed_mounts: tuple[Path, ...] | None = None,
     allowed_native_mounts: tuple[Path, ...] = (),
     observed_mount_records: tuple[MountRecord, ...] | None = None,
-    protect_probe_observations: bool = False,
+    protect_sandbox_observations: bool = False,
     cgroup_membership: str | None = None,
 ) -> tuple[str, ...]:
     values = _read_values(attestation_path)
@@ -555,7 +555,7 @@ def verify_installed_package(
         observed_mounts=observed_mounts,
         allowed_native_mounts=allowed_native_mounts,
         observed_mount_records=observed_mount_records,
-        protect_probe_observations=protect_probe_observations,
+        protect_sandbox_observations=protect_sandbox_observations,
         cgroup_membership=cgroup_membership,
     )
     if mount_errors:
@@ -624,9 +624,18 @@ def main(arguments: list[str] | None = None) -> int:
                 observed_mounts=tuple(record[0] for record in records),
                 allowed_native_mounts=nvidia_attestation[0],
                 observed_mount_records=records,
-                protect_probe_observations=True,
+                protect_sandbox_observations=True,
                 cgroup_membership=cgroup_membership,
             )
+        )
+    elif argv[:2] == ["forge", "simulate"]:
+        nvidia_attestation = None
+        nvidia_smi_path = None
+        errors = verify_installed_package(
+            observed_mounts=tuple(record[0] for record in records),
+            observed_mount_records=records,
+            protect_sandbox_observations=True,
+            cgroup_membership=_cgroup_membership(),
         )
     else:
         nvidia_attestation = None

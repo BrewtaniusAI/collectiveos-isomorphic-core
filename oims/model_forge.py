@@ -983,6 +983,9 @@ def simulate_forge_run(
     provenance = _verified_execution_source()
     if provenance is None:
         raise ForgePlanError("Forge simulation requires an attested isolated container source")
+    sandbox_errors = _forge_runtime_sandbox_errors(plan)
+    if sandbox_errors:
+        raise ForgePlanError("; ".join(sandbox_errors))
     source_commit, source_tree = provenance
 
     plan_hash = plan["plan_hash"]
@@ -1740,6 +1743,73 @@ def _cgroup_limits() -> dict[str, int | None]:
         "swap_limit_bytes": swap_limit,
         "pids_limit": pids_limit,
     }
+
+
+def _forge_runtime_sandbox_errors(plan: dict[str, Any]) -> tuple[str, ...]:
+    """Observe the isolation properties required before emitting simulated evidence."""
+
+    errors: list[str] = []
+    status = _proc_status()
+    effective_uid = os.geteuid() if hasattr(os, "geteuid") else None
+    effective_gid = os.getegid() if hasattr(os, "getegid") else None
+    if (effective_uid, effective_gid) != (65532, 65532):
+        errors.append("Forge sandbox is not running as UID/GID 65532")
+    if status.get("CapEff") != "0000000000000000":
+        errors.append("Forge sandbox effective Linux capabilities are not empty")
+    if status.get("NoNewPrivs") != "1":
+        errors.append("Forge sandbox no-new-privileges is not active")
+    if status.get("Seccomp") != "2":
+        errors.append("Forge sandbox runtime-default seccomp filter is not active")
+    if not _root_is_read_only():
+        errors.append("Forge sandbox root filesystem is not read-only")
+    if _default_route_present():
+        errors.append("Forge sandbox has a default network route")
+    if _network_interfaces() != {"lo"}:
+        errors.append("Forge sandbox exposes a non-loopback network interface")
+
+    for observation, valid in _forge_mount_policy().items():
+        if not valid:
+            errors.append(f"Forge mount policy observation {observation} is not satisfied")
+
+    memory = _memory_info()
+    swap_total = memory.get("SwapTotal")
+    swap_free = memory.get("SwapFree")
+    if not _is_int(swap_total, minimum=0) or swap_free != swap_total:
+        errors.append("Forge sandbox swap is active or cannot be proven unused")
+
+    limits = _cgroup_limits()
+    resources = plan.get("resources")
+    host_limit = resources.get("max_peak_host_bytes") if isinstance(resources, dict) else None
+    memory_domains = resources.get("memory_domains") if isinstance(resources, dict) else None
+    host_capacity = (
+        next(
+            (
+                domain["capacity_bytes"]
+                for domain in memory_domains
+                if isinstance(domain, dict)
+                and domain.get("kind") == "host-ram"
+                and _is_int(domain.get("capacity_bytes"), minimum=1)
+            ),
+            None,
+        )
+        if isinstance(memory_domains, list)
+        else None
+    )
+    memory_limit = limits["memory_limit_bytes"]
+    if (
+        not _is_int(memory_limit, minimum=1)
+        or not _is_int(host_limit, minimum=1)
+        or not _is_int(host_capacity, minimum=1)
+        or memory_limit < host_limit
+        or memory_limit > host_capacity
+    ):
+        errors.append("Forge sandbox memory cgroup is outside the declared host-memory bounds")
+    if limits["swap_limit_bytes"] != 0:
+        errors.append("Forge sandbox swap limit is not zero")
+    pids_limit = limits["pids_limit"]
+    if not _is_int(pids_limit, minimum=1) or pids_limit > 512:
+        errors.append("Forge sandbox PID limit is missing or exceeds 512")
+    return tuple(errors)
 
 
 def _scaled_nvidia_measurement(value: str, scale: int, *, minimum: int = 0) -> int:

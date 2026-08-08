@@ -21,6 +21,7 @@ from oims.model_forge import (
     EXPECTED_TARGET_PARAMETERS,
     ForgePlanError,
     _forge_mount_policy,
+    _forge_runtime_sandbox_errors,
     _installed_package_digest,
     _verified_execution_source,
     compute_plan_hash,
@@ -47,6 +48,7 @@ def attested_source_for_forge_exercises(
     monkeypatch: pytest.MonkeyPatch,
     request: pytest.FixtureRequest,
 ) -> None:
+    monkeypatch.setattr(model_forge_module, "_forge_runtime_sandbox_errors", lambda plan: ())
     if request.node.get_closest_marker("direct_source"):
         return
     original = model_forge_module._verified_execution_source
@@ -242,6 +244,109 @@ def test_simulation_emits_verifiable_non_model_evidence(tmp_path: Path) -> None:
     assert receipt["output_bytes"] == sum(path.stat().st_size for path in evidence_files)
     assert stat.S_IMODE(run_dir.stat().st_mode) == 0o755
     assert all(stat.S_IMODE(path.stat().st_mode) == 0o644 for path in evidence_files)
+
+
+@pytest.mark.parametrize(
+    ("status", "effective_uid", "root_read_only", "default_route", "interfaces", "error"),
+    [
+        (
+            {"CapEff": "0000000000000001", "NoNewPrivs": "1", "Seccomp": "2"},
+            65532,
+            True,
+            False,
+            {"lo"},
+            "capabilities are not empty",
+        ),
+        (
+            {"CapEff": "0000000000000000", "NoNewPrivs": "0", "Seccomp": "2"},
+            65532,
+            True,
+            False,
+            {"lo"},
+            "no-new-privileges is not active",
+        ),
+        (
+            {"CapEff": "0000000000000000", "NoNewPrivs": "1", "Seccomp": "0"},
+            65532,
+            True,
+            False,
+            {"lo"},
+            "seccomp filter is not active",
+        ),
+        (
+            {"CapEff": "0000000000000000", "NoNewPrivs": "1", "Seccomp": "2"},
+            0,
+            True,
+            False,
+            {"lo"},
+            "UID/GID 65532",
+        ),
+        (
+            {"CapEff": "0000000000000000", "NoNewPrivs": "1", "Seccomp": "2"},
+            65532,
+            False,
+            False,
+            {"lo"},
+            "root filesystem is not read-only",
+        ),
+        (
+            {"CapEff": "0000000000000000", "NoNewPrivs": "1", "Seccomp": "2"},
+            65532,
+            True,
+            True,
+            {"lo", "eth0"},
+            "default network route",
+        ),
+    ],
+)
+def test_simulation_sandbox_observes_runtime_isolation(
+    status: dict[str, str],
+    effective_uid: int,
+    root_read_only: bool,
+    default_route: bool,
+    interfaces: set[str],
+    error: str,
+) -> None:
+    with (
+        patch("oims.model_forge._proc_status", return_value=status),
+        patch("oims.model_forge.os.geteuid", return_value=effective_uid),
+        patch("oims.model_forge.os.getegid", return_value=65532),
+        patch("oims.model_forge._root_is_read_only", return_value=root_read_only),
+        patch("oims.model_forge._default_route_present", return_value=default_route),
+        patch("oims.model_forge._network_interfaces", return_value=interfaces),
+        patch(
+            "oims.model_forge._forge_mount_policy",
+            return_value={"all_required_mounts": True},
+        ),
+        patch(
+            "oims.model_forge._memory_info",
+            return_value={"SwapTotal": 0, "SwapFree": 0},
+        ),
+        patch(
+            "oims.model_forge._cgroup_limits",
+            return_value={
+                "memory_limit_bytes": 124 * 1024**3,
+                "memory_current_bytes": 1024,
+                "swap_limit_bytes": 0,
+                "pids_limit": 512,
+            },
+        ),
+    ):
+        errors = _forge_runtime_sandbox_errors(load_example())
+
+    assert any(error in observed for observed in errors)
+
+
+def test_simulation_refuses_unproven_runtime_isolation_before_writing(tmp_path: Path) -> None:
+    with (
+        patch(
+            "oims.model_forge._forge_runtime_sandbox_errors",
+            return_value=("Forge sandbox root filesystem is not read-only",),
+        ),
+        pytest.raises(ForgePlanError, match="root filesystem is not read-only"),
+    ):
+        simulate_forge_run(load_example(), artifacts_dir=tmp_path)
+    assert not list(tmp_path.iterdir())
 
 
 def test_simulation_refuses_to_overwrite_an_existing_run(tmp_path: Path) -> None:
@@ -1535,7 +1640,7 @@ def test_preimport_entrypoint_allows_attested_nvidia_runtime_mounts(tmp_path: Pa
     assert errors == ()
 
 
-@pytest.mark.parametrize("target", forge_entrypoint.PROBE_OBSERVATION_PATHS)
+@pytest.mark.parametrize("target", forge_entrypoint.SANDBOX_OBSERVATION_PATHS)
 def test_preimport_probe_rejects_mounts_over_observation_sources(target: Path) -> None:
     baseline = (
         forge_entrypoint.MountRecord(Path("/"), frozenset({"rw"}), "overlay", "overlay", Path("/")),
@@ -1557,10 +1662,10 @@ def test_preimport_probe_rejects_mounts_over_observation_sources(target: Path) -
         Path("/attacker/forged-observation"),
     )
 
-    errors = forge_entrypoint.probe_observation_mount_errors((*baseline, injected), "/")
+    errors = forge_entrypoint.sandbox_observation_mount_errors((*baseline, injected), "/")
 
     assert errors
-    assert errors[0].startswith("Forge physical-preflight observation")
+    assert errors[0].startswith("Forge sandbox observation")
 
 
 def test_preimport_mountinfo_parser_preserves_cgroup_root() -> None:
@@ -1597,10 +1702,10 @@ def test_preimport_probe_rejects_cgroup_subgroup_substitution(
         ),
     )
 
-    errors = forge_entrypoint.probe_observation_mount_errors(records, membership)
+    errors = forge_entrypoint.sandbox_observation_mount_errors(records, membership)
 
     assert errors
-    assert errors[0].startswith("Forge physical-preflight")
+    assert errors[0].startswith("Forge sandbox")
 
 
 def test_nvidia_runtime_mount_attestation_hashes_read_only_regular_files(
@@ -1675,6 +1780,24 @@ def test_preimport_probe_passes_nvidia_attestation_to_runtime(
 
     assert os.environ["OIMS_FORGE_NVIDIA_RUNTIME_SHA256"] == digest
     assert os.environ["OIMS_FORGE_NVIDIA_SMI_PATH"] == "/usr/bin/nvidia-smi"
+
+
+def test_preimport_simulation_authenticates_runtime_observation_sources() -> None:
+    records = (
+        forge_entrypoint.MountRecord(Path("/"), frozenset({"ro"}), "overlay", "overlay", Path("/")),
+    )
+    with (
+        patch.object(forge_entrypoint, "_mount_records", return_value=records),
+        patch.object(forge_entrypoint, "_cgroup_membership", return_value="/"),
+        patch.object(forge_entrypoint, "verify_installed_package", return_value=()) as verify,
+        patch.object(forge_entrypoint.os, "execv", side_effect=OSError("exec intercepted")),
+        pytest.raises(OSError, match="exec intercepted"),
+    ):
+        forge_entrypoint.main(["forge", "simulate"])
+
+    assert verify.call_args.kwargs["observed_mount_records"] == records
+    assert verify.call_args.kwargs["protect_sandbox_observations"] is True
+    assert verify.call_args.kwargs["cgroup_membership"] == "/"
 
 
 def test_oci_boundary_is_offline_unprivileged_and_non_training() -> None:
