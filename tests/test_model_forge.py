@@ -9,11 +9,14 @@ from unittest.mock import patch
 import pytest
 import yaml
 
+from forge.oims_forge_entrypoint import package_digest as entrypoint_package_digest
+from forge.oims_forge_entrypoint import verify_installed_package
 from oims.cli import main as cli_main
 from oims.manifest import ROOT
 from oims.model_forge import (
     EXPECTED_TARGET_PARAMETERS,
     ForgePlanError,
+    _installed_package_digest,
     compute_plan_hash,
     forge_container_environment_errors,
     forge_plan_decision,
@@ -1004,18 +1007,20 @@ def test_container_source_shortcut_requires_matching_image_attestation() -> None
         "OIMS_FORGE_SOURCE_COMMIT": "a" * 40,
         "OIMS_FORGE_SOURCE_TREE": "b" * 40,
     }
+    package_digest = "sha256:" + "c" * 64
     with (
         patch(
             "oims.model_forge._read_source_attestation",
-            return_value=("a" * 40, "b" * 40),
+            return_value=("a" * 40, "b" * 40, package_digest),
         ),
         patch("oims.model_forge._imported_source_is_isolated", return_value=True),
+        patch("oims.model_forge._installed_package_digest", return_value=package_digest),
     ):
         assert forge_container_environment_errors(environment) == ()
     with (
         patch(
             "oims.model_forge._read_source_attestation",
-            return_value=("a" * 40, "b" * 40),
+            return_value=("a" * 40, "b" * 40, package_digest),
         ),
         patch("oims.model_forge._imported_source_is_isolated", return_value=False),
     ):
@@ -1023,10 +1028,43 @@ def test_container_source_shortcut_requires_matching_image_attestation() -> None
     assert errors == ("Forge imported source is not isolated from runtime shadowing",)
     with patch(
         "oims.model_forge._read_source_attestation",
-        return_value=("c" * 40, "d" * 40),
+        return_value=("c" * 40, "d" * 40, package_digest),
     ):
         errors = forge_container_environment_errors(environment)
     assert errors == ("Forge image source attestation does not match the declared commit and tree",)
+    with (
+        patch(
+            "oims.model_forge._read_source_attestation",
+            return_value=("a" * 40, "b" * 40, package_digest),
+        ),
+        patch("oims.model_forge._imported_source_is_isolated", return_value=True),
+        patch(
+            "oims.model_forge._installed_package_digest",
+            return_value="sha256:" + "d" * 64,
+        ),
+    ):
+        errors = forge_container_environment_errors(environment)
+    assert errors == ("Forge imported package does not match the build attestation",)
+
+
+def test_preimport_entrypoint_rejects_installed_package_tampering(tmp_path: Path) -> None:
+    package_root = tmp_path / "oims"
+    package_root.mkdir()
+    (package_root / "__init__.py").write_text("VERSION = 1\n", encoding="utf-8")
+    (package_root / "model_forge.py").write_text("LAWFUL = True\n", encoding="utf-8")
+    observed = entrypoint_package_digest(package_root)
+    assert observed is not None
+    assert _installed_package_digest(package_root) == observed
+    attestation = tmp_path / "source.attestation"
+    attestation.write_text(
+        f"commit={'a' * 40}\ntree={'b' * 40}\npackage_sha256={observed}\n",
+        encoding="ascii",
+    )
+    assert verify_installed_package(attestation, package_root) == ()
+    (package_root / "model_forge.py").write_text("LAWFUL = False\n", encoding="utf-8")
+    assert verify_installed_package(attestation, package_root) == (
+        "Forge installed package does not match its build attestation",
+    )
 
 
 def test_oci_boundary_is_offline_unprivileged_and_non_training() -> None:
@@ -1065,7 +1103,12 @@ def test_oci_boundary_is_offline_unprivileged_and_non_training() -> None:
     assert "WORKDIR /workspace" not in containerfile
     assert "rm -rf /opt/oims-forge-build" in containerfile
     assert "WORKDIR /forge" in containerfile
-    assert 'ENTRYPOINT ["python", "-I", "-m", "oims"]' in containerfile
+    assert "--no-compile" in containerfile
+    assert "--seal-attestation" in containerfile
+    assert (
+        'ENTRYPOINT ["python", "-I", "/usr/local/libexec/oims-forge-entrypoint.py"]'
+        in containerfile
+    )
     launcher = (ROOT / "scripts" / "run_model_forge.ps1").read_text(encoding="utf-8")
     assert "status --porcelain=v1 --untracked-files=all" in launcher
     assert "ls-files -v" in launcher

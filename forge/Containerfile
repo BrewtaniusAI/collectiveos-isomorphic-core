@@ -21,9 +21,12 @@ COPY . /opt/oims-forge-build
 RUN test -f /opt/oims-forge-build/.oims-forge-source.attestation \
     && mkdir -p /usr/local/share/oims-forge \
     && mv /opt/oims-forge-build/.oims-forge-source.attestation \
-        /usr/local/share/oims-forge/source.attestation \
-    && chmod 0444 /usr/local/share/oims-forge/source.attestation
-RUN python -m pip install --no-cache-dir --no-deps . \
+        /usr/local/share/oims-forge/source.attestation
+RUN python -m pip install --no-cache-dir --no-compile --no-deps . \
+    && install -D -m 0555 forge/oims_forge_entrypoint.py \
+        /usr/local/libexec/oims-forge-entrypoint.py \
+    && python -I /usr/local/libexec/oims-forge-entrypoint.py --seal-attestation \
+    && chmod 0444 /usr/local/share/oims-forge/source.attestation \
     && cd / \
     && rm -rf /opt/oims-forge-build
 
@@ -32,5 +35,5 @@ RUN mkdir -p /forge/output /forge/inputs/base /forge/inputs/dataset \
 
 WORKDIR /forge
 USER 65532:65532
-ENTRYPOINT ["python", "-I", "-m", "oims"]
+ENTRYPOINT ["python", "-I", "/usr/local/libexec/oims-forge-entrypoint.py"]
 CMD ["forge", "validate", "--plan", "/forge/plan.json"]

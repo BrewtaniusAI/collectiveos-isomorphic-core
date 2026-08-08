@@ -378,7 +378,7 @@ def _is_immutable_image_ref(value: object) -> bool:
 
 def _read_source_attestation(
     path: Path = SOURCE_ATTESTATION_PATH,
-) -> tuple[str, str] | None:
+) -> tuple[str, str, str] | None:
     try:
         if path.stat().st_size > 256:
             return None
@@ -391,11 +391,39 @@ def _read_source_attestation(
         if not separator or key in values:
             return None
         values[key] = value
-    if set(values) != {"commit", "tree"}:
+    if set(values) != {"commit", "tree", "package_sha256"}:
         return None
     commit = values["commit"]
     tree = values["tree"]
-    return (commit, tree) if _is_revision(commit) and _is_revision(tree) else None
+    package_digest = values["package_sha256"]
+    return (
+        (commit, tree, package_digest)
+        if _is_revision(commit) and _is_revision(tree) and _is_digest(package_digest)
+        else None
+    )
+
+
+def _installed_package_digest(package_root: Path | None = None) -> str | None:
+    try:
+        root = (package_root or Path(__file__).parent).resolve(strict=True)
+        paths = sorted(root.rglob("*"), key=lambda path: path.relative_to(root).as_posix())
+        digest = hashlib.sha256()
+        for path in paths:
+            relative = path.relative_to(root)
+            if "__pycache__" in relative.parts or path.is_symlink():
+                return None
+            if path.is_dir():
+                continue
+            if not path.is_file():
+                return None
+            name = relative.as_posix().encode("utf-8")
+            content = path.read_bytes()
+            for field in (name, content):
+                digest.update(len(field).to_bytes(8, "big"))
+                digest.update(field)
+    except (OSError, RuntimeError, UnicodeError):
+        return None
+    return "sha256:" + digest.hexdigest()
 
 
 def _container_source_attestation_errors(environment: dict[str, Any]) -> tuple[str, ...]:
@@ -404,23 +432,26 @@ def _container_source_attestation_errors(environment: dict[str, Any]) -> tuple[s
     attestation = _read_source_attestation()
     if attestation is None:
         return ("Forge image source attestation is missing or malformed",)
-    if attestation != (commit, tree):
+    attested_commit, attested_tree, attested_package = attestation
+    if (attested_commit, attested_tree) != (commit, tree):
         return ("Forge image source attestation does not match the declared commit and tree",)
     if not _imported_source_is_isolated():
         return ("Forge imported source is not isolated from runtime shadowing",)
+    if _installed_package_digest() != attested_package:
+        return ("Forge imported package does not match the build attestation",)
     return ()
 
 
 def _imported_source_is_isolated() -> bool:
     try:
         source = Path(__file__).resolve(strict=True)
-        base_prefix = Path(sys.base_prefix).resolve(strict=True)
+        interpreter_prefix = Path(sys.prefix).resolve(strict=True)
     except (OSError, RuntimeError):
         return False
     workspace = Path("/workspace")
     return (
         sys.flags.isolated == 1
-        and base_prefix in source.parents
+        and interpreter_prefix in source.parents
         and workspace not in source.parents
     )
 

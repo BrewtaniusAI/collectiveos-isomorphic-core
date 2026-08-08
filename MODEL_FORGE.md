@@ -127,8 +127,10 @@ exported commit and Git tree in an attestation outside the installed package. Th
 that package into the interpreter prefix, removes its temporary source tree, and launches Python in
 isolated mode from `/forge`; the non-root runtime must match the attestation and prove that the
 imported module is isolated from `/workspace` before using the container provenance shortcut.
-Compose refuses a working-tree context. This keeps the source recorded in Forge receipts bound to
-the exact source copied into the image.
+Before importing any project code, an external isolated entrypoint hashes every installed `oims`
+package byte and compares it with a digest sealed into the build attestation; the in-package check
+repeats that comparison as defense in depth. Compose refuses a working-tree context. This keeps the
+source recorded in Forge receipts bound to the exact source copied into the image.
 
 Docker documents GPU reservations through `deploy.resources.reservations.devices`; the Forge
 sets `capabilities: [gpu]` and an explicit device ID. See
