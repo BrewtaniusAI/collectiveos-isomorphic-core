@@ -2,7 +2,7 @@ name: collective-model-forge
 
 x-forge-common: &forge-common
   build:
-    context: ..
+    context: ${FORGE_BUILD_CONTEXT:?set FORGE_BUILD_CONTEXT to an exported clean commit}
     dockerfile: forge/Containerfile
     args:
       FORGE_BASE_IMAGE: ${FORGE_BASE_IMAGE:?set FORGE_BASE_IMAGE to an immutable image@sha256 digest}

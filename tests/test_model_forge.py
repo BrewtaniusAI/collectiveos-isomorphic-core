@@ -253,7 +253,12 @@ def test_probe_can_prove_a_locked_4090_sandbox_without_training() -> None:
         ),
         patch(
             "oims.model_forge._memory_info",
-            return_value={"MemTotal": 128 * 1024**3, "SwapTotal": 0, "SwapFree": 0},
+            return_value={
+                "MemTotal": 128 * 1024**3,
+                "MemAvailable": 121 * 1024**3,
+                "SwapTotal": 0,
+                "SwapFree": 0,
+            },
         ),
         patch("oims.model_forge._root_is_read_only", return_value=True),
         patch("oims.model_forge._default_route_present", return_value=False),
@@ -288,6 +293,7 @@ def test_probe_can_prove_a_locked_4090_sandbox_without_training() -> None:
     assert result["lawful"] is True
     assert result["status"] == "READY"
     assert result["gpu"]["name"] == "NVIDIA GeForce RTX 4090"
+    assert result["sandbox_observation"]["host_memory_available_bytes"] == 121 * 1024**3
     assert result["training_started"] is False
     assert result["qmf_admissible"] is False
     run.assert_called_once()
@@ -364,6 +370,92 @@ def test_probe_mode_refuses_simulation_payload() -> None:
     assert "simulation must be null for physical preflight mode" in validate_forge_plan(plan)
 
 
+def test_container_input_paths_require_component_boundaries() -> None:
+    for field, value in (
+        ("local_model_path", "/forge/inputs/base-evil"),
+        ("local_dataset_path", "/forge/inputs/dataset-backup"),
+    ):
+        plan = load_example()
+        target = plan["target"]
+        assert isinstance(target, dict)
+        target[field] = value
+        rehash(plan)
+        assert any(field in error for error in validate_forge_plan(plan))
+
+
+def test_simulation_refuses_unreplayable_timestamps_before_writing(tmp_path: Path) -> None:
+    plan = load_example()
+    simulation = plan["simulation"]
+    assert isinstance(simulation, dict)
+    simulation["clock_start"] = "9999-12-31T23:59:59+00:00"
+    simulation["step_duration_seconds"] = 2
+    rehash(plan)
+    assert "simulation timestamps exceed the datetime range" in validate_forge_plan(plan)
+    with pytest.raises(ForgePlanError, match="timestamps exceed"):
+        simulate_forge_run(plan, artifacts_dir=tmp_path)
+    assert not list(tmp_path.iterdir())
+
+
+def test_probe_requires_current_host_memory_headroom() -> None:
+    plan = probe_plan()
+    environment = {
+        "OIMS_FORGE_ENABLE_PROBE": "1",
+        "OIMS_FORGE_CONTAINER": "1",
+        "HF_HUB_OFFLINE": "1",
+        "TRANSFORMERS_OFFLINE": "1",
+        "HF_DATASETS_OFFLINE": "1",
+        "OIMS_FORGE_BASE_IMAGE": "python:3.12-slim@sha256:" + "a" * 64,
+        "OIMS_FORGE_SOURCE_COMMIT": "a" * 40,
+    }
+    with (
+        patch(
+            "oims.model_forge._proc_status",
+            return_value={"CapEff": "0000000000000000", "NoNewPrivs": "1", "Seccomp": "2"},
+        ),
+        patch(
+            "oims.model_forge._memory_info",
+            return_value={
+                "MemTotal": 128 * 1024**3,
+                "MemAvailable": 1 * 1024**3,
+                "SwapTotal": 0,
+                "SwapFree": 0,
+            },
+        ),
+        patch("oims.model_forge._root_is_read_only", return_value=True),
+        patch("oims.model_forge._default_route_present", return_value=False),
+        patch("oims.model_forge._network_interfaces", return_value={"lo"}),
+        patch(
+            "oims.model_forge._forge_mount_policy",
+            return_value={
+                "plan_read_only": True,
+                "base_model_read_only": True,
+                "dataset_read_only": True,
+                "output_writable": True,
+                "tmpfs_active": True,
+            },
+        ),
+        patch(
+            "oims.model_forge._cgroup_limits",
+            return_value={
+                "memory_limit_bytes": 120 * 1024**3,
+                "swap_limit_bytes": 0,
+                "pids_limit": 512,
+            },
+        ),
+        patch("oims.model_forge.os.geteuid", return_value=65532),
+        patch("oims.model_forge.current_git_commit", return_value="a" * 40),
+        patch("oims.model_forge.subprocess.run") as run,
+    ):
+        result = inspect_physical_preflight(
+            plan,
+            accepted_plan_hash=plan["plan_hash"],
+            environment=environment,
+        )
+    assert result["lawful"] is False
+    assert "available host memory is below the plan's host-memory ceiling" in result["errors"]
+    run.assert_not_called()
+
+
 def test_recipe_preserves_reviewed_gpt_oss_moe_targets() -> None:
     plan = load_example()
     recipe = plan["recipe"]
@@ -434,6 +526,7 @@ def test_oci_boundary_is_offline_unprivileged_and_non_training() -> None:
         assert service["cap_drop"] == ["ALL"]
         assert "no-new-privileges:true" in service["security_opt"]
         assert service["mem_limit"] == service["memswap_limit"]
+        assert service["build"]["context"].startswith("${FORGE_BUILD_CONTEXT:")
         assert service["environment"]["OIMS_FORGE_BASE_IMAGE"].startswith("${FORGE_BASE_IMAGE:")
         assert service["environment"]["OIMS_FORGE_SOURCE_COMMIT"].startswith(
             "${FORGE_SOURCE_COMMIT:"
@@ -455,6 +548,12 @@ def test_oci_boundary_is_offline_unprivileged_and_non_training() -> None:
     containerfile = (ROOT / "forge" / "Containerfile").read_text(encoding="utf-8")
     assert "ARG FORGE_BASE_IMAGE\nFROM ${FORGE_BASE_IMAGE}" in containerfile
     assert "FROM python:" not in containerfile
+    launcher = (ROOT / "scripts" / "run_model_forge.ps1").read_text(encoding="utf-8")
+    assert "status --porcelain=v1 --untracked-files=all" in launcher
+    assert "archive --format=tar" in launcher
+    assert "$env:FORGE_BUILD_CONTEXT = $BuildContext" in launcher
+    assert "Model Forge refuses a dirty build context" in launcher
+    assert "SourceCommit does not match the repository HEAD" in launcher
     runtime_lock = (ROOT / "requirements" / "forge-runtime.lock").read_text(encoding="utf-8")
     assert "torch" not in runtime_lock.lower()
     assert "transformers" not in runtime_lock.lower()

@@ -109,6 +109,11 @@ The image build may access package indexes to install the small controller depen
 running container has no network. A physical toolchain lock must later hash the selected base
 image and every downloaded training wheel before the `train` state can be introduced.
 
+The launcher requires Git, verifies that `-SourceCommit` (when supplied) equals `HEAD`, refuses any
+tracked or untracked working-tree change, and uses `git archive` to construct a temporary Docker
+context from that exact commit. Compose refuses a working-tree context. This keeps the commit
+recorded in Forge receipts bound to the exact source copied into the image.
+
 Docker documents GPU reservations through `deploy.resources.reservations.devices`; the Forge
 sets `capabilities: [gpu]` and an explicit device ID. See
 [Docker Compose GPU support](https://docs.docker.com/compose/how-tos/gpu-support/).
@@ -127,8 +132,8 @@ sets `capabilities: [gpu]` and an explicit device ID. See
    `/tmp`.
 7. No default route, no interface other than loopback, and no swap use.
 8. Cgroup RAM at or above the plan ceiling, zero cgroup swap, and a PID limit no greater than 512.
-9. A parseable RTX 4090 `nvidia-smi` record with enough currently available VRAM, host RAM, and
-   temperature headroom for the plan ceilings.
+9. A parseable RTX 4090 `nvidia-smi` record with enough currently available VRAM, currently
+   available host RAM, and temperature headroom for the plan ceilings.
 
 The checked-in probe plan hash is
 `sha256:a7d8598120a94de263af8f3d2de54e5be0da4142c10c8aeef4d1467e8266f4b6`. Run it

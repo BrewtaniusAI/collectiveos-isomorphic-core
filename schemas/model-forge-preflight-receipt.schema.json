@@ -70,6 +70,7 @@
         "swap_total_bytes",
         "swap_used_bytes",
         "host_memory_bytes",
+        "host_memory_available_bytes",
         "container_memory_limit_bytes",
         "container_swap_limit_bytes",
         "container_pids_limit"
@@ -96,6 +97,12 @@
           ]
         },
         "host_memory_bytes": {
+          "oneOf": [
+            {"type": "null"},
+            {"type": "integer", "minimum": 1}
+          ]
+        },
+        "host_memory_available_bytes": {
           "oneOf": [
             {"type": "null"},
             {"type": "integer", "minimum": 1}

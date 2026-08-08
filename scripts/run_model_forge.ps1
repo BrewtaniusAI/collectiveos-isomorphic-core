@@ -38,17 +38,29 @@ if ($BaseImage -notmatch '@sha256:[0-9a-f]{64}$') {
 $PlanPath = (Resolve-Path -LiteralPath $Plan).Path
 $RepositoryRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 
-if (-not $SourceCommit) {
-    if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-        throw 'SourceCommit is required when git is unavailable.'
-    }
-    $SourceCommit = (& git -C $RepositoryRoot rev-parse HEAD).Trim()
-    if ($LASTEXITCODE -ne 0) {
-        throw "Could not resolve the Model Forge source commit (exit $LASTEXITCODE)."
-    }
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+    throw 'Git is required to prove the Model Forge build context is a clean commit.'
 }
+if (-not (Get-Command tar -ErrorAction SilentlyContinue)) {
+    throw 'tar is required to export the exact Model Forge commit as the Docker build context.'
+}
+$HeadCommit = (& git -C $RepositoryRoot rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0) {
+    throw "Could not resolve the Model Forge source commit (exit $LASTEXITCODE)."
+}
+if ($SourceCommit -and $SourceCommit -ne $HeadCommit) {
+    throw 'SourceCommit does not match the repository HEAD selected for the build context.'
+}
+$SourceCommit = $HeadCommit
 if ($SourceCommit -notmatch '^[0-9a-f]{40}$') {
     throw 'SourceCommit must be an exact 40-character lowercase Git commit.'
+}
+$DirtyState = @(& git -C $RepositoryRoot status --porcelain=v1 --untracked-files=all)
+if ($LASTEXITCODE -ne 0) {
+    throw "Could not verify the Model Forge build context (exit $LASTEXITCODE)."
+}
+if ($DirtyState.Count -ne 0) {
+    throw 'Model Forge refuses a dirty build context; commit or remove every tracked/untracked change.'
 }
 
 foreach ($Directory in @($BaseModelDir, $DatasetDir, $OutputDir)) {
@@ -65,6 +77,7 @@ foreach ($Directory in @($BaseModelDir, $DatasetDir, $OutputDir)) {
 $ComposePath = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\forge\compose.yaml')).Path
 $EnvironmentNames = @(
     'FORGE_BASE_IMAGE',
+    'FORGE_BUILD_CONTEXT',
     'FORGE_SOURCE_COMMIT',
     'FORGE_PLAN',
     'FORGE_BASE_MODEL_DIR',
@@ -79,8 +92,27 @@ foreach ($Name in $EnvironmentNames) {
     $OriginalEnvironment[$Name] = [Environment]::GetEnvironmentVariable($Name, 'Process')
 }
 
+$BuildContext = $null
+$ArchivePath = $null
 try {
+    $BuildContext = Join-Path `
+        ([System.IO.Path]::GetTempPath()) `
+        ("collective-model-forge-" + [guid]::NewGuid().ToString('N'))
+    $ArchivePath = "$BuildContext.tar"
+    New-Item -ItemType Directory -Path $BuildContext | Out-Null
+    & git -C $RepositoryRoot archive --format=tar "--output=$ArchivePath" $SourceCommit
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not export the Model Forge source commit (exit $LASTEXITCODE)."
+    }
+    & tar -xf $ArchivePath -C $BuildContext
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not extract the Model Forge build context (exit $LASTEXITCODE)."
+    }
+    Remove-Item -LiteralPath $ArchivePath -Force
+    $ArchivePath = $null
+
     $env:FORGE_BASE_IMAGE = $BaseImage
+    $env:FORGE_BUILD_CONTEXT = $BuildContext
     $env:FORGE_SOURCE_COMMIT = $SourceCommit
     $env:FORGE_PLAN = $PlanPath
     $env:FORGE_BASE_MODEL_DIR = (Resolve-Path -LiteralPath $BaseModelDir).Path
@@ -117,5 +149,11 @@ try {
 finally {
     foreach ($Name in $EnvironmentNames) {
         [Environment]::SetEnvironmentVariable($Name, $OriginalEnvironment[$Name], 'Process')
+    }
+    if ($ArchivePath -and (Test-Path -LiteralPath $ArchivePath -PathType Leaf)) {
+        Remove-Item -LiteralPath $ArchivePath -Force
+    }
+    if ($BuildContext -and (Test-Path -LiteralPath $BuildContext -PathType Container)) {
+        Remove-Item -LiteralPath $BuildContext -Recurse -Force
     }
 }

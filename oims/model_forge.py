@@ -328,10 +328,16 @@ def _is_repository_id(value: object) -> bool:
 
 
 def _is_container_path(value: object, prefix: str) -> bool:
-    if not isinstance(value, str) or not value.startswith(prefix):
+    if not isinstance(value, str):
         return False
     path = PurePosixPath(value)
-    return path.is_absolute() and ".." not in path.parts and str(path) == value
+    base = PurePosixPath(prefix)
+    return (
+        path.is_absolute()
+        and ".." not in path.parts
+        and str(path) == value
+        and (path == base or base in path.parents)
+    )
 
 
 def _is_immutable_image_ref(value: object) -> bool:
@@ -661,7 +667,8 @@ def validate_forge_plan(plan: object) -> tuple[str, ...]:
     if mode == "simulate":
         sim = _check_keys(simulation, SIMULATION_KEYS, "simulation", errors)
         if sim is not None:
-            if _parse_timestamp(sim.get("clock_start")) is None:
+            started = _parse_timestamp(sim.get("clock_start"))
+            if started is None:
                 errors.append("simulation.clock_start must be timezone-aware RFC3339")
             for field in SIMULATION_KEYS - {"clock_start", "synthetic_loss_millionths"}:
                 _check_positive_int(sim.get(field), f"simulation.{field}", errors)
@@ -711,6 +718,11 @@ def validate_forge_plan(plan: object) -> tuple[str, ...]:
                         and duration > resources["max_duration_seconds"]
                     ):
                         errors.append("simulation duration exceeds the resource budget")
+                    if started is not None:
+                        try:
+                            started + timedelta(seconds=duration)
+                        except OverflowError:
+                            errors.append("simulation timestamps exceed the datetime range")
                 if _is_int(sim.get("steps")) and _is_int(sim.get("output_bytes_per_checkpoint")):
                     output_bytes = sim["steps"] * sim["output_bytes_per_checkpoint"]
                     if (
@@ -1334,12 +1346,17 @@ def inspect_physical_preflight(
     if swap_total < 0 or swap_free < 0 or swap_total != swap_free:
         errors.append("swap is active or cannot be proven unused")
     host_memory = memory.get("MemTotal")
+    available_host_memory = memory.get("MemAvailable")
     resources = root.get("resources")
     host_limit = resources.get("max_peak_host_bytes") if isinstance(resources, dict) else None
     if not _is_int(host_memory, minimum=1) or (
         _is_int(host_limit, minimum=1) and host_memory < host_limit
     ):
         errors.append("physical host memory is below the plan's host-memory ceiling")
+    if not _is_int(available_host_memory, minimum=1) or (
+        _is_int(host_limit, minimum=1) and available_host_memory < host_limit
+    ):
+        errors.append("available host memory is below the plan's host-memory ceiling")
     if not _is_int(cgroup_limits["memory_limit_bytes"], minimum=1) or (
         _is_int(host_limit, minimum=1) and cgroup_limits["memory_limit_bytes"] < host_limit
     ):
@@ -1436,6 +1453,7 @@ def inspect_physical_preflight(
                 swap_total - swap_free if swap_total >= 0 and swap_free >= 0 else None
             ),
             "host_memory_bytes": host_memory,
+            "host_memory_available_bytes": available_host_memory,
             "container_memory_limit_bytes": cgroup_limits["memory_limit_bytes"],
             "container_swap_limit_bytes": cgroup_limits["swap_limit_bytes"],
             "container_pids_limit": cgroup_limits["pids_limit"],
