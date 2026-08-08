@@ -88,6 +88,8 @@ SECCOMP_PROBE_SYSCALLS = {
     "x86_64": (248, 249, 250, 435, 425, 323),
 }
 SECCOMP_UNKNOWN_SYSCALL = 0x7FFFFFFF
+AT_FDCWD = -100
+RENAME_NOREPLACE = 1
 
 TOP_LEVEL_KEYS = {
     "schema_version",
@@ -982,6 +984,32 @@ def _safe_run_directory(root: Path, run_id: str) -> Path:
     return run_dir
 
 
+def _rename_directory_noreplace(source: Path, destination: Path) -> None:
+    try:
+        renameat2 = ctypes.CDLL(None, use_errno=True).renameat2
+    except (AttributeError, OSError) as exc:
+        raise OSError(errno.ENOSYS, "atomic no-replace rename is unavailable") from exc
+    renameat2.argtypes = (
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    )
+    renameat2.restype = ctypes.c_int
+    ctypes.set_errno(0)
+    result = renameat2(
+        AT_FDCWD,
+        os.fsencode(source),
+        AT_FDCWD,
+        os.fsencode(destination),
+        RENAME_NOREPLACE,
+    )
+    if result != 0:
+        observed_errno = ctypes.get_errno() or errno.EIO
+        raise OSError(observed_errno, os.strerror(observed_errno), destination)
+
+
 def simulate_forge_run(
     plan: dict[str, Any],
     *,
@@ -1155,7 +1183,7 @@ def simulate_forge_run(
         for artifact in staging_dir.rglob("*"):
             if artifact.is_file():
                 artifact.chmod(0o644)
-        staging_dir.rename(run_dir)
+        _rename_directory_noreplace(staging_dir, run_dir)
         published = True
     except OSError as exc:
         if run_dir.exists():
@@ -1286,6 +1314,8 @@ def verify_forge_run(receipt_path: Path | str) -> dict[str, Any]:
     else:
         plan_errors = validate_forge_plan(plan)
         errors.extend(f"plan: {error}" for error in plan_errors)
+        if not plan_errors and plan.get("mode") != "simulate":
+            errors.append("Forge replay plan mode is not simulate")
         plan_valid = not plan_errors and plan.get("mode") == "simulate"
         if receipt.get("plan_hash") != plan.get("plan_hash"):
             errors.append("Forge receipt plan hash link is invalid")

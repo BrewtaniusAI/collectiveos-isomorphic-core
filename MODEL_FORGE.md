@@ -68,6 +68,9 @@ named `synthetic-candidate.json` and contains explicit `not_a_model`, `not_a_pef
 `qmf_admissible: false` boundaries. Simulation plans are capped at 4,096 steps and 64 MiB of
 evidence. Before writing, the runtime serializes and meters the plan, telemetry, checkpoints,
 candidate, and sealed receipt; verification independently sums those files and rejects any mismatch.
+Completed run directories are published with Linux atomic no-replace rename semantics, so a
+concurrently created destination is preserved. Receipt replay explicitly requires a validated
+`simulate` plan before any plan-derived semantic checks can be considered satisfied.
 
 ## OCI / WSL2 environment
 

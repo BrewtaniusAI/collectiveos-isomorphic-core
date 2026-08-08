@@ -28,6 +28,7 @@ from oims.model_forge import (
     _forge_runtime_sandbox_errors,
     _installed_package_digest,
     _linux_capability_sets_empty,
+    _rename_directory_noreplace,
     _runtime_default_seccomp_denials_active,
     _verified_execution_source,
     compute_plan_hash,
@@ -502,6 +503,40 @@ def test_simulation_refuses_to_overwrite_an_existing_run(tmp_path: Path) -> None
         simulate_forge_run(plan, artifacts_dir=tmp_path)
 
 
+def test_atomic_no_replace_rename_preserves_an_empty_destination(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    destination = tmp_path / "destination"
+    source.mkdir()
+    destination.mkdir()
+    (source / "receipt.json").write_text("source evidence\n", encoding="utf-8")
+
+    with pytest.raises(FileExistsError):
+        _rename_directory_noreplace(source, destination)
+
+    assert (source / "receipt.json").read_text(encoding="utf-8") == "source evidence\n"
+    assert not list(destination.iterdir())
+
+
+def test_simulation_preserves_concurrently_created_empty_run_directory(tmp_path: Path) -> None:
+    plan = load_example()
+    run_id = f"sim-{plan['plan_hash'].removeprefix('sha256:')[:16]}"
+    run_dir = tmp_path / run_id
+
+    def competing_publish(_source: Path, destination: Path) -> None:
+        destination.mkdir()
+        raise FileExistsError(errno.EEXIST, "destination exists", destination)
+
+    with (
+        patch("oims.model_forge._rename_directory_noreplace", side_effect=competing_publish),
+        pytest.raises(ForgePlanError, match="Forge run already exists"),
+    ):
+        simulate_forge_run(plan, artifacts_dir=tmp_path)
+
+    assert run_dir.is_dir()
+    assert not list(run_dir.iterdir())
+    assert not list(tmp_path.glob(f".{run_id}.*.tmp"))
+
+
 def test_simulation_cleans_staging_directory_after_write_failure(tmp_path: Path) -> None:
     plan = load_example()
     with (
@@ -524,6 +559,27 @@ def test_checkpoint_tampering_breaks_verification(tmp_path: Path) -> None:
     result = verify_forge_run(run_dir / "receipt.json")
     assert result["valid"] is False
     assert any("checkpoint 2 hash is invalid" in error for error in result["errors"])
+
+
+def test_receipt_replay_rejects_a_valid_non_simulation_plan(tmp_path: Path) -> None:
+    receipt = simulate_forge_run(load_example(), artifacts_dir=tmp_path)
+    run_dir = tmp_path / receipt["run_id"]
+    physical_plan = probe_plan()
+    (run_dir / "plan.json").write_text(
+        json.dumps(physical_plan, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    receipt["plan_hash"] = physical_plan["plan_hash"]
+    receipt.pop("record_sha256")
+    (run_dir / "receipt.json").write_text(
+        json.dumps(seal_record(receipt), indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    result = verify_forge_run(run_dir / "receipt.json")
+
+    assert result["valid"] is False
+    assert "Forge replay plan mode is not simulate" in result["errors"]
 
 
 def test_checkpoint_enumeration_is_bounded_before_parsing(tmp_path: Path) -> None:
