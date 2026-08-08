@@ -10,6 +10,23 @@ from pathlib import Path
 
 ATTESTATION_PATH = Path("/usr/local/share/oims-forge/source.attestation")
 MOUNTINFO_PATH = Path("/proc/self/mountinfo")
+PROCESS_MAPS_PATH = Path("/proc/self/maps")
+NATIVE_RUNTIME_ROOTS = (
+    Path("/bin"),
+    Path("/sbin"),
+    Path("/lib"),
+    Path("/lib64"),
+    Path("/usr/bin"),
+    Path("/usr/sbin"),
+    Path("/usr/lib"),
+    Path("/usr/lib64"),
+)
+DYNAMIC_LOADER_CONFIGURATION = (
+    Path("/etc/ld.so.cache"),
+    Path("/etc/ld.so.conf"),
+    Path("/etc/ld.so.conf.d"),
+    Path("/etc/ld.so.preload"),
+)
 
 
 def _is_revision(value: object) -> bool:
@@ -109,19 +126,64 @@ def _mount_points(path: Path = MOUNTINFO_PATH) -> tuple[Path, ...] | None:
     return tuple(mount_points)
 
 
+def _native_runtime_paths(path: Path = PROCESS_MAPS_PATH) -> tuple[Path, ...] | None:
+    protected: set[Path] = set()
+
+    def add_path(candidate: Path, *, required: bool) -> bool:
+        try:
+            if not required and not candidate.exists() and not candidate.is_symlink():
+                return True
+            if candidate.is_absolute() and candidate != Path("/proc/self/exe"):
+                protected.add(candidate)
+            protected.add(candidate.resolve(strict=True))
+        except (OSError, RuntimeError):
+            return False
+        return True
+
+    if not add_path(Path(sys.executable), required=True):
+        return None
+    if not add_path(Path("/proc/self/exe"), required=True):
+        return None
+    for candidate in (*NATIVE_RUNTIME_ROOTS, *DYNAMIC_LOADER_CONFIGURATION):
+        if not add_path(candidate, required=False):
+            return None
+
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return None
+    for line in lines:
+        fields = line.split(maxsplit=5)
+        if len(fields) < 5:
+            return None
+        if len(fields) != 6 or not fields[5].startswith("/"):
+            continue
+        mapped_path = fields[5]
+        if mapped_path.endswith(" (deleted)") or not add_path(Path(mapped_path), required=True):
+            return None
+    return tuple(sorted(protected, key=str))
+
+
 def protected_mount_errors(
     package_root: Path,
     attestation_path: Path = ATTESTATION_PATH,
     verifier_path: Path | None = None,
     observed_mounts: tuple[Path, ...] | None = None,
     interpreter_prefix: Path | None = None,
+    native_runtime_paths: tuple[Path, ...] | None = None,
 ) -> tuple[str, ...]:
+    runtime_paths = (
+        native_runtime_paths if native_runtime_paths is not None else _native_runtime_paths()
+    )
+    if runtime_paths is None:
+        return ("Forge native executable runtime cannot be verified",)
     try:
         protected = (
             package_root.resolve(strict=True),
             attestation_path.resolve(strict=True),
             (verifier_path or Path(__file__)).resolve(strict=True),
             (interpreter_prefix or Path(sys.prefix)).resolve(strict=True),
+            *runtime_paths,
         )
     except (OSError, RuntimeError):
         return ("Forge protected source paths cannot be resolved",)
@@ -136,7 +198,7 @@ def protected_mount_errors(
             mount == target or mount in target.parents or target in mount.parents
             for target in protected
         ):
-            return ("Forge protected source paths contain an unexpected runtime mount",)
+            return ("Forge protected executable runtime contains an unexpected mount",)
     return ()
 
 

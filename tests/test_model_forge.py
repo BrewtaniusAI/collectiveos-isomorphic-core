@@ -1321,7 +1321,7 @@ def test_preimport_entrypoint_rejects_matching_replacement_mounts(tmp_path: Path
         attestation,
         package_root,
         (Path("/"), package_file, attestation),
-    ) == ("Forge protected source paths contain an unexpected runtime mount",)
+    ) == ("Forge protected executable runtime contains an unexpected mount",)
 
 
 def test_preimport_entrypoint_rejects_dependency_mounts(tmp_path: Path) -> None:
@@ -1344,7 +1344,31 @@ def test_preimport_entrypoint_rejects_dependency_mounts(tmp_path: Path) -> None:
         (Path("/"), dependency_root),
         interpreter_prefix,
     )
-    assert errors == ("Forge protected source paths contain an unexpected runtime mount",)
+    assert errors == ("Forge protected executable runtime contains an unexpected mount",)
+
+
+def test_preimport_entrypoint_rejects_native_library_mounts(tmp_path: Path) -> None:
+    interpreter_prefix = tmp_path / "python"
+    package_root = interpreter_prefix / "lib" / "site-packages" / "oims"
+    package_root.mkdir(parents=True)
+    attestation = interpreter_prefix / "share" / "source.attestation"
+    attestation.parent.mkdir()
+    attestation.write_text("attestation\n", encoding="ascii")
+    verifier = interpreter_prefix / "libexec" / "entrypoint.py"
+    verifier.parent.mkdir()
+    verifier.write_text("verifier\n", encoding="utf-8")
+    native_library = Path("/lib/x86_64-linux-gnu/libc.so.6")
+
+    errors = protected_mount_errors(
+        package_root,
+        attestation,
+        verifier,
+        (Path("/"), native_library),
+        interpreter_prefix,
+        (native_library,),
+    )
+
+    assert errors == ("Forge protected executable runtime contains an unexpected mount",)
 
 
 def test_oci_boundary_is_offline_unprivileged_and_non_training() -> None:
@@ -1398,7 +1422,9 @@ def test_oci_boundary_is_offline_unprivileged_and_non_training() -> None:
     )
     entrypoint = (ROOT / "forge" / "oims_forge_entrypoint.py").read_text(encoding="utf-8")
     assert "/proc/self/mountinfo" in entrypoint
-    assert "protected source paths contain an unexpected runtime mount" in entrypoint
+    assert "/proc/self/maps" in entrypoint
+    assert "NATIVE_RUNTIME_ROOTS" in entrypoint
+    assert "protected executable runtime contains an unexpected mount" in entrypoint
     launcher = (ROOT / "scripts" / "run_model_forge.ps1").read_text(encoding="utf-8")
     assert "status --porcelain=v1 --untracked-files=all" in launcher
     assert "ls-files -v" in launcher
