@@ -170,7 +170,7 @@ sets `capabilities: [gpu]` and an explicit device ID. See
 7. No default route, no interface other than loopback, and no swap use.
 8. Current cgroup usage subtracted from the cgroup RAM limit must leave the full plan ceiling;
    cgroup swap is zero and the PID limit is no greater than 512.
-9. Observed host `MemTotal` within a bounded 2 GiB reserved-memory tolerance of the declared
+9. Observed host `MemTotal` within a symmetric 2 GiB reserved-memory tolerance of the declared
    physical host domain, plus enough currently available host RAM for the peak ceiling.
 10. Every injected NVIDIA utility and library must match its exact path and SHA-256 entry in the
     source-controlled `forge/nvidia-runtime.approved` manifest.

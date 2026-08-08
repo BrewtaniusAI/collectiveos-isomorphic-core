@@ -1006,7 +1006,23 @@ def test_direct_verification_refuses_unattested_loaded_source(tmp_path: Path) ->
                 "pids_limit": 512,
             },
             131 * 1024**3,
-            "physical host memory is below the declared memory domain",
+            "physical host memory does not match the declared memory domain",
+        ),
+        (
+            {
+                "MemTotal": 132 * 1024**3,
+                "MemAvailable": 121 * 1024**3,
+                "SwapTotal": 0,
+                "SwapFree": 0,
+            },
+            {
+                "memory_limit_bytes": 124 * 1024**3,
+                "memory_current_bytes": 1 * 1024**3,
+                "swap_limit_bytes": 0,
+                "pids_limit": 512,
+            },
+            128 * 1024**3,
+            "physical host memory does not match the declared memory domain",
         ),
     ],
 )

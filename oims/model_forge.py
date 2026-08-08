@@ -1826,9 +1826,9 @@ def inspect_physical_preflight(
     else:
         if (
             _is_int(declared_host_memory, minimum=1)
-            and host_memory + HOST_MEMORY_DOMAIN_TOLERANCE_BYTES < declared_host_memory
+            and abs(host_memory - declared_host_memory) > HOST_MEMORY_DOMAIN_TOLERANCE_BYTES
         ):
-            errors.append("physical host memory is below the declared memory domain")
+            errors.append("physical host memory does not match the declared memory domain")
         if _is_int(host_limit, minimum=1) and host_memory < host_limit:
             errors.append("physical host memory is below the plan's host-memory ceiling")
     if not _is_int(available_host_memory, minimum=1) or (
