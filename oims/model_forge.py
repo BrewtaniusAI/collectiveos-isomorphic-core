@@ -1841,6 +1841,8 @@ def inspect_physical_preflight(
                         errors.append("nvidia-smi returned an empty device UUID")
                     elif not fields[1]:
                         errors.append("nvidia-smi returned an empty device name")
+                    elif fields[1] != "NVIDIA GeForce RTX 4090":
+                        errors.append("physical GPU identity is not the reviewed RTX 4090 target")
                     else:
                         gpu = {
                             "uuid": fields[0],
@@ -1856,10 +1858,6 @@ def inspect_physical_preflight(
                             for domain in root["resources"]["memory_domains"]
                             if domain["kind"] == "gpu-vram"
                         )
-                        if fields[1] != "NVIDIA GeForce RTX 4090":
-                            errors.append(
-                                "physical GPU identity is not the reviewed RTX 4090 target"
-                            )
                         if abs(total_bytes - declared_device_bytes) > 512 * 1024**2:
                             errors.append(
                                 "physical GPU memory does not match the declared memory domain"
@@ -1873,7 +1871,11 @@ def inspect_physical_preflight(
         "@context": "https://oims.collective-osp.org/model-forge/v1",
         "@type": "OIMSModelForgePreflightReceipt",
         "schema_version": FORGE_SCHEMA_VERSION,
-        "plan_id": root.get("plan_id") if isinstance(root.get("plan_id"), str) else None,
+        "plan_id": (
+            root.get("plan_id")
+            if isinstance(root.get("plan_id"), str) and root["plan_id"].strip()
+            else None
+        ),
         "plan_hash": root.get("plan_hash") if _is_digest(root.get("plan_hash")) else None,
         "mode": "probe",
         "status": "READY" if not errors else "REFUSED",

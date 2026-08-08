@@ -464,6 +464,13 @@ def test_refused_probe_omits_unverified_source_provenance() -> None:
         ),
         (
             "GPU-00000000-0000-0000-0000-000000000000",
+            "NVIDIA A100-SXM4-80GB",
+            "24564",
+            "450",
+            "physical GPU identity is not the reviewed RTX 4090 target",
+        ),
+        (
+            "GPU-00000000-0000-0000-0000-000000000000",
             "NVIDIA GeForce RTX 4090",
             "24564",
             "0",
@@ -607,6 +614,16 @@ def test_non_json_public_inputs_return_refusals_instead_of_raising() -> None:
     )
     assert receipt["lawful"] is False
     assert receipt["plan_id"] is None
+
+    empty_id_plan = probe_plan()
+    empty_id_plan["plan_id"] = ""
+    empty_id_receipt = inspect_physical_preflight(
+        empty_id_plan,
+        accepted_plan_hash=empty_id_plan["plan_hash"],
+        environment={},
+    )
+    assert empty_id_receipt["lawful"] is False
+    assert empty_id_receipt["plan_id"] is None
 
     root_receipt = inspect_physical_preflight(
         None,
