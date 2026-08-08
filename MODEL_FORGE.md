@@ -139,8 +139,10 @@ image and every downloaded training wheel before the `train` state can be introd
 
 The launcher requires Git, verifies that `-SourceCommit` (when supplied) equals `HEAD`, refuses any
 tracked or untracked working-tree change, rejects assume-unchanged/skip-worktree index flags, and
-uses `git archive` to construct a temporary Docker context from that exact commit. It records the
-exported commit and Git tree in an attestation outside the installed package. The build installs
+streams `git archive` for that exact commit directly into `docker build`, with no mutable extracted
+directory. The stream adds the exported commit and Git tree as a virtual attestation file, and the
+launcher supplies the pinned base image, commit, and tree as direct build arguments rather than
+mutable Compose fields. The build installs
 that package into the interpreter prefix, removes its temporary source tree, and launches Python in
 isolated, site-disabled mode from `/forge`; the non-root runtime must match the attestation and prove that the
 imported module is isolated from `/workspace` before using the container provenance shortcut.

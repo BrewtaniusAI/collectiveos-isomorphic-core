@@ -1,14 +1,8 @@
 name: collective-model-forge
 
 x-forge-common: &forge-common
-  build:
-    context: ${FORGE_BUILD_CONTEXT:?set FORGE_BUILD_CONTEXT to an exported clean commit}
-    dockerfile: forge/Containerfile
-    args:
-      FORGE_BASE_IMAGE: ${FORGE_BASE_IMAGE:?set FORGE_BASE_IMAGE to an immutable image@sha256 digest}
-      FORGE_SOURCE_COMMIT: ${FORGE_SOURCE_COMMIT:?set FORGE_SOURCE_COMMIT to the exact source commit}
-      FORGE_SOURCE_TREE: ${FORGE_SOURCE_TREE:?set FORGE_SOURCE_TREE to the exact source tree}
   image: collective-model-forge:${FORGE_IMAGE_TAG:-local}
+  pull_policy: never
   entrypoint:
     - python
     - -I

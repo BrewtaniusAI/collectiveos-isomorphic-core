@@ -2254,7 +2254,8 @@ def test_oci_boundary_is_offline_unprivileged_and_non_training() -> None:
         assert service["cap_drop"] == ["ALL"]
         assert "no-new-privileges:true" in service["security_opt"]
         assert service["mem_limit"] == service["memswap_limit"]
-        assert service["build"]["context"].startswith("${FORGE_BUILD_CONTEXT:")
+        assert "build" not in service
+        assert service["pull_policy"] == "never"
         assert service["environment"]["OIMS_FORGE_BASE_IMAGE"].startswith("${FORGE_BASE_IMAGE:")
         assert service["environment"]["OIMS_FORGE_SOURCE_COMMIT"].startswith(
             "${FORGE_SOURCE_COMMIT:"
@@ -2311,8 +2312,8 @@ def test_oci_boundary_is_offline_unprivileged_and_non_training() -> None:
     launcher = (ROOT / "scripts" / "run_model_forge.ps1").read_text(encoding="utf-8")
     assert "status --porcelain=v1 --untracked-files=all" in launcher
     assert "ls-files -v" in launcher
-    assert "archive --format=tar" in launcher
-    assert "$env:FORGE_BUILD_CONTEXT = $BuildContext" in launcher
+    assert "--add-virtual-file=.oims-forge-source.attestation" in launcher
+    assert "$env:FORGE_IMAGE_TAG = $ImageTag" in launcher
     assert "Model Forge refuses a dirty build context" in launcher
     assert "repository-affecting Git environment overrides" in launcher
     assert "GIT_DIR" in launcher
@@ -2344,7 +2345,7 @@ def test_launcher_enforces_process_and_mount_policy_before_container_start() -> 
     ):
         assert f"'{target}'" in launcher
     assert launcher.index("config --format json") < launcher.index("switch ($Mode)")
-    assert launcher.index("switch ($Mode)") < launcher.index("run --rm --build")
+    assert launcher.index("switch ($Mode)") < launcher.index("run --rm")
 
 
 def test_launcher_executes_validated_snapshot_without_ambient_mode_inputs() -> None:
@@ -2381,11 +2382,31 @@ def test_launcher_rejects_writable_output_aliases_of_protected_inputs() -> None:
     assert "Verify requires -Receipt" in launcher
     assert "Verify requires Receipt to remain beneath OutputDir" in launcher
     assert "$env:FORGE_RECEIPT = $ContainerReceipt" in launcher
-    assert "run --rm --build verify" in launcher
+    assert "run --rm verify" in launcher
     runtime_lock = (ROOT / "requirements" / "forge-runtime.lock").read_text(encoding="utf-8")
     assert "torch" not in runtime_lock.lower()
     assert "transformers" not in runtime_lock.lower()
     assert "peft" not in runtime_lock.lower()
+
+
+def test_launcher_streams_exact_commit_into_direct_image_build() -> None:
+    launcher = (ROOT / "scripts" / "run_model_forge.ps1").read_text(encoding="utf-8")
+
+    assert "function Invoke-ForgeImageBuild" in launcher
+    assert "--add-virtual-file=.oims-forge-source.attestation:$Attestation" in launcher
+    assert "FORGE_BASE_IMAGE=$BaseImage" in launcher
+    assert "FORGE_SOURCE_COMMIT=$SourceCommit" in launcher
+    assert "FORGE_SOURCE_TREE=$SourceTree" in launcher
+    assert (
+        "$GitProcess.StandardOutput.BaseStream.CopyTo(\n"
+        "                $DockerProcess.StandardInput.BaseStream"
+    ) in launcher
+    assert "$Service.PSObject.Properties['build']" in launcher
+    assert "[string]$Service.image -ne $ForgeImage" in launcher
+    assert "[string]$Service.pull_policy -ne 'never'" in launcher
+    assert "FORGE_BUILD_CONTEXT" not in launcher
+    assert "--build simulate" not in launcher
+    assert launcher.index("Invoke-ForgeImageBuild `") < launcher.index("switch ($Mode)")
 
 
 def test_forge_receipt_schemas_refuse_undeclared_fields_and_match_runtime(tmp_path: Path) -> None:

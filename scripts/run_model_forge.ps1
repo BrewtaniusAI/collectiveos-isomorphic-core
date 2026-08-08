@@ -28,6 +28,10 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+    throw 'Model Forge requires PowerShell 7 or later.'
+}
+
 function Test-ContainedRelativePath {
     param([Parameter(Mandatory = $true)][string]$RelativePath)
 
@@ -53,11 +57,108 @@ function Test-PathsOverlap {
     )
 }
 
+function Invoke-ForgeImageBuild {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepositoryRoot,
+        [Parameter(Mandatory = $true)][string]$SourceCommit,
+        [Parameter(Mandatory = $true)][string]$SourceTree,
+        [Parameter(Mandatory = $true)][string]$BaseImage,
+        [Parameter(Mandatory = $true)][string]$ForgeImage
+    )
+
+    $Attestation = "commit=$SourceCommit`ntree=$SourceTree`n"
+    $DockerStartInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $DockerStartInfo.FileName = 'docker'
+    $DockerStartInfo.UseShellExecute = $false
+    $DockerStartInfo.RedirectStandardInput = $true
+    foreach ($Argument in @(
+        'build',
+        '--file',
+        'forge/Containerfile',
+        '--build-arg',
+        "FORGE_BASE_IMAGE=$BaseImage",
+        '--build-arg',
+        "FORGE_SOURCE_COMMIT=$SourceCommit",
+        '--build-arg',
+        "FORGE_SOURCE_TREE=$SourceTree",
+        '--tag',
+        $ForgeImage,
+        '-'
+    )) {
+        $DockerStartInfo.ArgumentList.Add($Argument)
+    }
+
+    $GitStartInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $GitStartInfo.FileName = 'git'
+    $GitStartInfo.UseShellExecute = $false
+    $GitStartInfo.RedirectStandardOutput = $true
+    foreach ($Argument in @(
+        '-C',
+        $RepositoryRoot,
+        'archive',
+        '--format=tar',
+        "--add-virtual-file=.oims-forge-source.attestation:$Attestation",
+        $SourceCommit
+    )) {
+        $GitStartInfo.ArgumentList.Add($Argument)
+    }
+
+    $DockerProcess = [System.Diagnostics.Process]::Start($DockerStartInfo)
+    if ($null -eq $DockerProcess) {
+        throw 'Could not start the immutable Model Forge image build.'
+    }
+    $GitProcess = $null
+    $CopyFailure = $null
+    try {
+        $GitProcess = [System.Diagnostics.Process]::Start($GitStartInfo)
+        if ($null -eq $GitProcess) {
+            throw 'Could not start the exact-commit archive stream.'
+        }
+        try {
+            $GitProcess.StandardOutput.BaseStream.CopyTo(
+                $DockerProcess.StandardInput.BaseStream
+            )
+        }
+        catch {
+            $CopyFailure = $_
+        }
+        finally {
+            $DockerProcess.StandardInput.Close()
+        }
+        $GitProcess.WaitForExit()
+        $DockerProcess.WaitForExit()
+        if ($null -ne $CopyFailure) {
+            throw "Could not stream the exact-commit archive to Docker: $CopyFailure"
+        }
+        if ($GitProcess.ExitCode -ne 0) {
+            throw "Could not export the Model Forge source commit (exit $($GitProcess.ExitCode))."
+        }
+        if ($DockerProcess.ExitCode -ne 0) {
+            throw "Could not build the immutable Model Forge image (exit $($DockerProcess.ExitCode))."
+        }
+    }
+    finally {
+        if (-not $DockerProcess.HasExited) {
+            $DockerProcess.StandardInput.Close()
+            $DockerProcess.Kill($true)
+            $DockerProcess.WaitForExit()
+        }
+        if ($null -ne $GitProcess -and -not $GitProcess.HasExited) {
+            $GitProcess.Kill($true)
+            $GitProcess.WaitForExit()
+        }
+        if ($null -ne $GitProcess) {
+            $GitProcess.Dispose()
+        }
+        $DockerProcess.Dispose()
+    }
+}
+
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     throw 'Docker Desktop / docker CLI is required.'
 }
 
-if ($BaseImage -notmatch '@sha256:[0-9a-f]{64}$') {
+if ($BaseImage -notmatch '^[a-z0-9][a-z0-9._:/-]*@sha256:[0-9a-f]{64}$') {
     throw 'BaseImage must be pinned as image@sha256:<64 lowercase hex characters>.'
 }
 
@@ -66,9 +167,6 @@ $RepositoryRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Pat
 
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     throw 'Git is required to prove the Model Forge build context is a clean commit.'
-}
-if (-not (Get-Command tar -ErrorAction SilentlyContinue)) {
-    throw 'tar is required to export the exact Model Forge commit as the Docker build context.'
 }
 $RepositoryAffectingGitEnvironment = @(
     'GIT_ALTERNATE_OBJECT_DIRECTORIES',
@@ -173,7 +271,7 @@ if ($Mode -eq 'Verify') {
 $ComposePath = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\forge\compose.yaml')).Path
 $EnvironmentNames = @(
     'FORGE_BASE_IMAGE',
-    'FORGE_BUILD_CONTEXT',
+    'FORGE_IMAGE_TAG',
     'FORGE_SOURCE_COMMIT',
     'FORGE_SOURCE_TREE',
     'FORGE_PLAN',
@@ -190,33 +288,21 @@ foreach ($Name in $EnvironmentNames) {
     $OriginalEnvironment[$Name] = [Environment]::GetEnvironmentVariable($Name, 'Process')
 }
 
-$BuildContext = $null
-$ArchivePath = $null
 try {
-    $BuildContext = Join-Path `
-        ([System.IO.Path]::GetTempPath()) `
-        ("collective-model-forge-" + [guid]::NewGuid().ToString('N'))
-    $ArchivePath = "$BuildContext.tar"
-    New-Item -ItemType Directory -Path $BuildContext | Out-Null
-    & git -C $RepositoryRoot archive --format=tar "--output=$ArchivePath" $SourceCommit
-    if ($LASTEXITCODE -ne 0) {
-        throw "Could not export the Model Forge source commit (exit $LASTEXITCODE)."
+    $TagHasher = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $TagMaterial = [System.Text.Encoding]::UTF8.GetBytes("$SourceCommit`n$BaseImage")
+        $ImageTag = -join (
+            $TagHasher.ComputeHash($TagMaterial) | ForEach-Object { $_.ToString('x2') }
+        )
     }
-    & tar -xf $ArchivePath -C $BuildContext
-    if ($LASTEXITCODE -ne 0) {
-        throw "Could not extract the Model Forge build context (exit $LASTEXITCODE)."
+    finally {
+        $TagHasher.Dispose()
     }
-    Remove-Item -LiteralPath $ArchivePath -Force
-    $ArchivePath = $null
-    @(
-        "commit=$SourceCommit"
-        "tree=$SourceTree"
-    ) | Set-Content `
-        -LiteralPath (Join-Path $BuildContext '.oims-forge-source.attestation') `
-        -Encoding ascii
+    $ForgeImage = "collective-model-forge:$ImageTag"
 
     $env:FORGE_BASE_IMAGE = $BaseImage
-    $env:FORGE_BUILD_CONTEXT = $BuildContext
+    $env:FORGE_IMAGE_TAG = $ImageTag
     $env:FORGE_SOURCE_COMMIT = $SourceCommit
     $env:FORGE_SOURCE_TREE = $SourceTree
     $env:FORGE_PLAN = $PlanPath
@@ -297,9 +383,11 @@ try {
     }
     foreach ($ServiceName in $ExpectedServices) {
         $Service = $ResolvedCompose.services.$ServiceName
+        $BuildProperty = $Service.PSObject.Properties['build']
         if (
-            [string]$Service.build.context -ne $BuildContext -or
-            [string]$Service.build.dockerfile -ne 'forge/Containerfile' -or
+            $null -ne $BuildProperty -or
+            [string]$Service.image -ne $ForgeImage -or
+            [string]$Service.pull_policy -ne 'never' -or
             [string]$Service.user -ne '65532:65532' -or
             [string]$Service.network_mode -ne 'none' -or
             -not [bool]$Service.read_only -or
@@ -365,19 +453,26 @@ try {
         }
     }
 
+    Invoke-ForgeImageBuild `
+        -RepositoryRoot $RepositoryRoot `
+        -SourceCommit $SourceCommit `
+        -SourceTree $SourceTree `
+        -BaseImage $BaseImage `
+        -ForgeImage $ForgeImage
+
     switch ($Mode) {
         'Validate' {
-            $ComposeOutput | & docker compose -f - run --rm --build simulate `
+            $ComposeOutput | & docker compose -f - run --rm simulate `
                 forge validate --plan /forge/plan.json
         }
         'Simulate' {
-            $ComposeOutput | & docker compose -f - run --rm --build simulate
+            $ComposeOutput | & docker compose -f - run --rm simulate
         }
         'Verify' {
-            $ComposeOutput | & docker compose -f - run --rm --build verify
+            $ComposeOutput | & docker compose -f - run --rm verify
         }
         'Probe' {
-            $ComposeOutput | & docker compose -f - --profile probe run --rm --build probe
+            $ComposeOutput | & docker compose -f - --profile probe run --rm probe
         }
     }
     if ($LASTEXITCODE -ne 0) {
@@ -387,11 +482,5 @@ try {
 finally {
     foreach ($Name in $EnvironmentNames) {
         [Environment]::SetEnvironmentVariable($Name, $OriginalEnvironment[$Name], 'Process')
-    }
-    if ($ArchivePath -and (Test-Path -LiteralPath $ArchivePath -PathType Leaf)) {
-        Remove-Item -LiteralPath $ArchivePath -Force
-    }
-    if ($BuildContext -and (Test-Path -LiteralPath $BuildContext -PathType Container)) {
-        Remove-Item -LiteralPath $BuildContext -Recurse -Force
     }
 }
