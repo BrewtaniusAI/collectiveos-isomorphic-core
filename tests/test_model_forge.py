@@ -2357,13 +2357,13 @@ def test_launcher_executes_validated_snapshot_without_ambient_mode_inputs() -> N
 
     assert receipt_clear in launcher
     assert probe_clear in launcher
-    assert "$ComposeOutput | & docker compose -f - run" in launcher
-    assert "$ComposeOutput | & docker compose -f - --profile probe run" in launcher
+    assert "$ExecutionCompose | & docker compose -f - run" in launcher
+    assert "$ExecutionCompose | & docker compose -f - --profile probe run" in launcher
     assert "docker compose -f $ComposePath run" not in launcher
     assert launcher.index(receipt_clear) < launcher.index("config --format json")
     assert launcher.index(probe_clear) < launcher.index("config --format json")
     assert launcher.index("config --format json") < launcher.index(
-        "$ComposeOutput | & docker compose -f - run"
+        "$ExecutionCompose | & docker compose -f - run"
     )
 
 
@@ -2416,6 +2416,20 @@ def test_launcher_terminates_archive_producer_after_broken_pipe() -> None:
     wait = launcher.index("$GitProcess.WaitForExit()", failure)
 
     assert failure < terminate < wait
+
+
+def test_launcher_runs_the_exact_built_image_id() -> None:
+    launcher = (ROOT / "scripts" / "run_model_forge.ps1").read_text(encoding="utf-8")
+
+    assert "$DockerStartInfo.RedirectStandardOutput = $true" in launcher
+    assert "'--quiet'" in launcher
+    assert "$ImageId = $DockerProcess.StandardOutput.ReadToEnd().Trim()" in launcher
+    assert "$ImageId -notmatch '^sha256:[0-9a-f]{64}$'" in launcher
+    assert "$ForgeImageId = Invoke-ForgeImageBuild `" in launcher
+    assert "$ResolvedCompose.services.$ServiceName.image = $ForgeImageId" in launcher
+    assert "$ExecutionCompose = $ResolvedCompose | ConvertTo-Json -Depth 100 -Compress" in launcher
+    assert "$ExecutionCompose | & docker compose -f - run" in launcher
+    assert "$ComposeOutput | & docker compose -f - run" not in launcher
 
 
 def test_forge_receipt_schemas_refuse_undeclared_fields_and_match_runtime(tmp_path: Path) -> None:

@@ -71,8 +71,10 @@ function Invoke-ForgeImageBuild {
     $DockerStartInfo.FileName = 'docker'
     $DockerStartInfo.UseShellExecute = $false
     $DockerStartInfo.RedirectStandardInput = $true
+    $DockerStartInfo.RedirectStandardOutput = $true
     foreach ($Argument in @(
         'build',
+        '--quiet',
         '--file',
         'forge/Containerfile',
         '--build-arg',
@@ -132,6 +134,7 @@ function Invoke-ForgeImageBuild {
             $DockerProcess.StandardInput.Close()
         }
         $GitProcess.WaitForExit()
+        $ImageId = $DockerProcess.StandardOutput.ReadToEnd().Trim()
         $DockerProcess.WaitForExit()
         if ($null -ne $CopyFailure) {
             throw "Could not stream the exact-commit archive to Docker: $CopyFailure"
@@ -142,6 +145,10 @@ function Invoke-ForgeImageBuild {
         if ($DockerProcess.ExitCode -ne 0) {
             throw "Could not build the immutable Model Forge image (exit $($DockerProcess.ExitCode))."
         }
+        if ($ImageId -notmatch '^sha256:[0-9a-f]{64}$') {
+            throw 'Docker did not return an immutable Model Forge image ID.'
+        }
+        return $ImageId
     }
     finally {
         if (-not $DockerProcess.HasExited) {
@@ -459,26 +466,30 @@ try {
         }
     }
 
-    Invoke-ForgeImageBuild `
+    $ForgeImageId = Invoke-ForgeImageBuild `
         -RepositoryRoot $RepositoryRoot `
         -SourceCommit $SourceCommit `
         -SourceTree $SourceTree `
         -BaseImage $BaseImage `
         -ForgeImage $ForgeImage
+    foreach ($ServiceName in $ExpectedServices) {
+        $ResolvedCompose.services.$ServiceName.image = $ForgeImageId
+    }
+    $ExecutionCompose = $ResolvedCompose | ConvertTo-Json -Depth 100 -Compress
 
     switch ($Mode) {
         'Validate' {
-            $ComposeOutput | & docker compose -f - run --rm simulate `
+            $ExecutionCompose | & docker compose -f - run --rm simulate `
                 forge validate --plan /forge/plan.json
         }
         'Simulate' {
-            $ComposeOutput | & docker compose -f - run --rm simulate
+            $ExecutionCompose | & docker compose -f - run --rm simulate
         }
         'Verify' {
-            $ComposeOutput | & docker compose -f - run --rm verify
+            $ExecutionCompose | & docker compose -f - run --rm verify
         }
         'Probe' {
-            $ComposeOutput | & docker compose -f - --profile probe run --rm probe
+            $ExecutionCompose | & docker compose -f - --profile probe run --rm probe
         }
     }
     if ($LASTEXITCODE -ne 0) {
