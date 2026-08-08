@@ -94,6 +94,26 @@ Endpoints:
 The service serializes local weight execution. It performs inference only and does not grant
 filesystem, shell, desktop, network, or governance authority.
 
+## Virtual Model Forge
+
+Version 0.4 adds an offline, container-isolated Model Forge for the first Collective coding
+adapter. It can validate QMF-bound plans, run deterministic training simulations, verify
+telemetry/checkpoint chains, and inspect the RTX 4090 sandbox. It cannot yet train, merge,
+publish, serve, or promote a model, and every emitted receipt says whether it is simulated or
+physical preflight evidence.
+
+```bash
+python -m oims forge validate \
+  --plan forge/examples/gpt-oss-20b-4090-simulation.plan.json
+```
+
+Direct working-tree execution is validation-only. Simulation, physical probing, and receipt
+verification require the isolated launcher-built container. The trusted launcher validates the
+resolved entrypoint and exact bind-mount policy before container creation; the container then
+checks provenance before importing project code. Raw or overridden OCI invocations are outside the
+Forge evidence contract. See `MODEL_FORGE.md` for the WSL2/Docker/RTX 4090 flow and the exact
+promotion boundary.
+
 ## Download and run the whole family
 
 ```powershell
@@ -151,6 +171,7 @@ bindings, and evidence-class consistency.
 ## Repository map
 
 - `oims/` — runtime, agents, CollectiveOS bridge, receipts, verification, and weight management
+- `forge/` — offline OCI Model Forge, strict plans, simulation, and physical preflight
 - `MODEL_MANIFEST.json` — heterogeneous model bindings and exact upstream weight identities
 - `AGENT_MANIFEST.json` — explicit CollectiveOS role bindings
 - `COLLECTIVE_INTEGRATION.md` — request/response and deployment boundary

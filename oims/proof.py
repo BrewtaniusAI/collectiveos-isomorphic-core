@@ -71,6 +71,29 @@ def atomic_write_json(path: Path, value: Any) -> None:
         raise
 
 
+def atomic_create_json(path: Path, value: Any) -> None:
+    """Create a durable JSON file without ever replacing an existing path."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor: int | None = None
+    created = False
+    try:
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+        created = True
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            descriptor = None
+            json.dump(value, handle, indent=2, ensure_ascii=False, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+    except BaseException:
+        if descriptor is not None:
+            os.close(descriptor)
+        if created:
+            path.unlink(missing_ok=True)
+        raise
+
+
 def seal_record(record: dict[str, Any]) -> dict[str, Any]:
     unsealed = dict(record)
     unsealed.pop("record_sha256", None)

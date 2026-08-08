@@ -37,3 +37,15 @@ machine schemas, sealed nested receipts, a fail-closed verifier, tests, and CI.
 Evidence: `schemas/`, `oims/verify.py`, `SCOPE_MATRIX.json`, `VERIFICATION.md`, and `tests/`.
 
 Non-claim: hash seals are not signatures and local files are not external WORM storage.
+
+## Claim 4: bounded virtual training environment
+
+Model Forge validates exact QMF-bound plans and can deterministically simulate resource,
+checkpoint, telemetry, rollback, and verification flows. Its locked probe state can inspect an
+offline RTX 4090 sandbox without loading weights or starting training.
+
+Evidence: `oims/model_forge.py`, `forge/`, `schemas/model-forge-*.json`, `MODEL_FORGE.md`, and
+`tests/test_model_forge.py`.
+
+Non-claim: simulated or physical-preflight receipts are not trained models, PEFT adapters,
+deployment artifacts, or QMF admission evidence.

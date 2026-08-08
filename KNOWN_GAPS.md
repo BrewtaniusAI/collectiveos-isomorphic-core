@@ -1,6 +1,6 @@
 # Known Gaps
 
-The in-repository 0.3.0 surfaces are implemented. Remaining gates require hardware, external
+The in-repository 0.4.0 surfaces are implemented. Remaining gates require hardware, external
 authority, independent evaluation, or an owner decision:
 
 - execute all 28,170,935,456 bytes on the target RTX 4090 workstation;
@@ -9,6 +9,8 @@ authority, independent evaluation, or an owner decision:
 - configure signing identity and an external Proof Vault/WORM destination;
 - commission an independent semantic-equivalence and adversarial evaluation;
 - deploy the local CollectiveOS envelope behind the intended service/process boundary;
+- bind byte-exact GPT-OSS weights, a rights-reviewed Harmony dataset, and a fully hashed physical
+  training toolchain before authorizing even a one-step LoRA memory preflight;
 - design distributed node identity, transport, scheduling, and failure semantics for a later mesh.
 
 These gaps prohibit stronger release claims but do not invalidate the implemented local runtime,

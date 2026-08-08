@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oims.collective-osp.org/schemas/model-forge-checkpoint-1.0.0.json",
+  "title": "OIMS Model Forge Synthetic Checkpoint",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "evidence_class",
+    "synthetic",
+    "step",
+    "previous_checkpoint_hash",
+    "plan_hash",
+    "input_tokens",
+    "synthetic_loss_millionths",
+    "synthetic_output_bytes",
+    "checkpoint_hash"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "run_id": {"type": "string", "pattern": "^sim-[0-9a-f]{16}$"},
+    "evidence_class": {"const": "SIMULATED"},
+    "synthetic": {"const": true},
+    "step": {"type": "integer", "minimum": 1},
+    "previous_checkpoint_hash": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+      ]
+    },
+    "plan_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "input_tokens": {"type": "integer", "minimum": 1},
+    "synthetic_loss_millionths": {"type": "integer", "minimum": 0},
+    "synthetic_output_bytes": {"type": "integer", "minimum": 1},
+    "checkpoint_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  }
+}

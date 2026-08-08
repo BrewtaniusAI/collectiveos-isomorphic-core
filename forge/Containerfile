@@ -1,0 +1,45 @@
+ARG FORGE_BASE_IMAGE
+FROM ${FORGE_BASE_IMAGE}
+
+ARG FORGE_SOURCE_COMMIT
+ARG FORGE_SOURCE_TREE
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    HF_HUB_OFFLINE=1 \
+    TRANSFORMERS_OFFLINE=1 \
+    HF_DATASETS_OFFLINE=1 \
+    LD_LIBRARY_PATH= \
+    LD_PRELOAD= \
+    LD_AUDIT= \
+    GLIBC_TUNABLES= \
+    OIMS_FORGE_CONTAINER=1 \
+    OIMS_FORGE_SOURCE_COMMIT=${FORGE_SOURCE_COMMIT} \
+    OIMS_FORGE_SOURCE_TREE=${FORGE_SOURCE_TREE}
+
+WORKDIR /opt/oims-forge-build
+COPY requirements/forge-runtime.lock /tmp/forge-runtime.lock
+RUN python -m pip install --no-cache-dir -r /tmp/forge-runtime.lock
+COPY . /opt/oims-forge-build
+RUN test -f /opt/oims-forge-build/.oims-forge-source.attestation \
+    && mkdir -p /usr/local/share/oims-forge \
+    && mv /opt/oims-forge-build/.oims-forge-source.attestation \
+        /usr/local/share/oims-forge/source.attestation
+RUN python -m pip install --no-cache-dir --no-compile --no-deps . \
+    && install -D -m 0555 forge/oims_forge_entrypoint.py \
+        /usr/local/libexec/oims-forge-entrypoint.py \
+    && install -D -m 0444 forge/nvidia-runtime.approved \
+        /usr/local/share/oims-forge/nvidia-runtime.approved \
+    && python -I -S /usr/local/libexec/oims-forge-entrypoint.py --seal-attestation \
+    && chmod 0444 /usr/local/share/oims-forge/source.attestation \
+    && cd / \
+    && rm -rf /opt/oims-forge-build
+
+RUN mkdir -p /forge/output /forge/inputs/base /forge/inputs/dataset \
+    && chown -R 65532:65532 /forge
+
+WORKDIR /forge
+USER 65532:65532
+ENTRYPOINT ["python", "-I", "-S", "/usr/local/libexec/oims-forge-entrypoint.py"]
+CMD ["forge", "validate", "--plan", "/forge/plan.json"]

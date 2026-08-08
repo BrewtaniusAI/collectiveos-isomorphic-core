@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "repository": "collectiveos-isomorphic-core",
-  "release_candidate": "0.3.1",
+  "release_candidate": "0.4.0",
   "scope_status": "IN_REPO_COMPLETE_TARGET_ACCEPTANCE_PENDING",
   "components": [
     {
@@ -113,6 +113,21 @@
       "acceptance": "CI and direct target versions are pinned and the declared source dependency set has an SPDX SBOM."
     },
     {
+      "id": "model-forge-virtual-environment",
+      "status": "implemented-simulation-and-physical-preflight",
+      "evidence": [
+        "oims/model_forge.py",
+        "forge/compose.yaml",
+        "forge/Containerfile",
+        "forge/examples/gpt-oss-20b-4090-probe.plan.json",
+        "scripts/run_model_forge.ps1",
+        "schemas/model-forge-plan.schema.json",
+        "tests/test_model_forge.py",
+        "MODEL_FORGE.md"
+      ],
+      "acceptance": "Strict QMF-bound plans run only as non-admissible simulation or non-training physical preflight, with offline OCI isolation and replayable telemetry/checkpoint evidence."
+    },
+    {
       "id": "target-weight-execution",
       "status": "pending-target-machine",
       "evidence": [
@@ -149,7 +164,7 @@
     },
     {
       "id": "distributed-mesh",
-      "status": "deferred-outside-0.3",
+      "status": "deferred-outside-0.4",
       "evidence": [
         "iso-models/iso-mesh/README.md"
       ],
