@@ -46,6 +46,14 @@ MAX_SIMULATION_STEPS = 4096
 MAX_FORGE_OUTPUT_BYTES = 64 * 1024 * 1024
 DEFAULT_FORGE_ARTIFACTS_DIR = ROOT / "artifacts" / "model-forge"
 SOURCE_ATTESTATION_PATH = Path("/usr/local/share/oims-forge/source.attestation")
+NVIDIA_SMI_PATHS = frozenset(
+    {
+        "/bin/nvidia-smi",
+        "/sbin/nvidia-smi",
+        "/usr/bin/nvidia-smi",
+        "/usr/sbin/nvidia-smi",
+    }
+)
 RFC3339_TIMESTAMP = re.compile(
     r"^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}"
     r"(?:\.[0-9]+)?(?:[Zz]|[+-][0-9]{2}:[0-9]{2})$"
@@ -487,8 +495,15 @@ def forge_container_environment_errors(
         errors.append("OIMS_FORGE_SOURCE_TREE is not an exact lowercase Git tree")
     if require_probe_unlock and not _is_digest(env.get("OIMS_FORGE_NVIDIA_RUNTIME_SHA256")):
         errors.append("OIMS_FORGE_NVIDIA_RUNTIME_SHA256 is not a pre-import runtime attestation")
+    if require_probe_unlock and _attested_nvidia_smi_path(env) is None:
+        errors.append("OIMS_FORGE_NVIDIA_SMI_PATH is not an attested system executable")
     errors.extend(_container_source_attestation_errors(env))
     return tuple(errors)
+
+
+def _attested_nvidia_smi_path(environment: dict[str, Any]) -> str | None:
+    value = environment.get("OIMS_FORGE_NVIDIA_SMI_PATH")
+    return value if isinstance(value, str) and value in NVIDIA_SMI_PATHS else None
 
 
 def _verified_execution_source(
@@ -1754,6 +1769,7 @@ def inspect_physical_preflight(
     if environment is not None and not isinstance(environment, dict):
         errors.append("Forge environment must be a mapping")
     env = environment if isinstance(environment, dict) else dict(os.environ)
+    nvidia_smi_path = _attested_nvidia_smi_path(env)
     errors.extend(forge_container_environment_errors(env, require_probe_unlock=True))
     base_image_pinned = _is_immutable_image_ref(env.get("OIMS_FORGE_BASE_IMAGE"))
     provenance = _verified_execution_source(env) if env.get("OIMS_FORGE_CONTAINER") == "1" else None
@@ -1845,7 +1861,7 @@ def inspect_physical_preflight(
     gpu: dict[str, Any] | None = None
     if not errors:
         command = [
-            "nvidia-smi",
+            nvidia_smi_path or "",
             f"--id={root['resources']['device_id']}",
             "--query-gpu=uuid,name,memory.total,memory.used,temperature.gpu,power.draw,power.limit",
             "--format=csv,noheader,nounits",

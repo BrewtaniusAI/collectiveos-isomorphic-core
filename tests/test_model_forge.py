@@ -38,6 +38,7 @@ from oims.proof import seal_record
 EXAMPLE = ROOT / "forge" / "examples" / "gpt-oss-20b-4090-simulation.plan.json"
 PROBE_EXAMPLE = ROOT / "forge" / "examples" / "gpt-oss-20b-4090-probe.plan.json"
 TEST_VERIFIED_SOURCE = ("a" * 40, "b" * 40)
+TEST_NVIDIA_SMI_PATH = "/usr/bin/nvidia-smi"
 
 
 @pytest.fixture(autouse=True)
@@ -544,10 +545,28 @@ def test_probe_requires_exact_dual_unlock_before_device_inspection() -> None:
     run.assert_not_called()
 
 
+def test_probe_rejects_unattested_nvidia_smi_path_before_device_inspection() -> None:
+    plan = probe_plan()
+    environment = {
+        "OIMS_FORGE_ENABLE_PROBE": "1",
+        "OIMS_FORGE_NVIDIA_RUNTIME_SHA256": "sha256:" + "d" * 64,
+        "OIMS_FORGE_NVIDIA_SMI_PATH": "/forge/inputs/base/nvidia-smi",
+    }
+    with patch("oims.model_forge.subprocess.run") as run:
+        result = inspect_physical_preflight(
+            plan,
+            accepted_plan_hash=plan["plan_hash"],
+            environment=environment,
+        )
+    assert "OIMS_FORGE_NVIDIA_SMI_PATH is not an attested system executable" in result["errors"]
+    run.assert_not_called()
+
+
 def test_refused_probe_omits_unverified_source_provenance() -> None:
     environment = {
         "OIMS_FORGE_ENABLE_PROBE": "1",
         "OIMS_FORGE_NVIDIA_RUNTIME_SHA256": "sha256:" + "d" * 64,
+        "OIMS_FORGE_NVIDIA_SMI_PATH": TEST_NVIDIA_SMI_PATH,
         "OIMS_FORGE_CONTAINER": "1",
         "HF_HUB_OFFLINE": "1",
         "TRANSFORMERS_OFFLINE": "1",
@@ -632,6 +651,8 @@ def test_probe_can_prove_a_locked_4090_sandbox_without_training(
     environment = {
         "OIMS_FORGE_ENABLE_PROBE": "1",
         "OIMS_FORGE_NVIDIA_RUNTIME_SHA256": "sha256:" + "d" * 64,
+        "OIMS_FORGE_NVIDIA_SMI_PATH": TEST_NVIDIA_SMI_PATH,
+        "PATH": "/forge/inputs/base:/usr/bin",
         "OIMS_FORGE_CONTAINER": "1",
         "HF_HUB_OFFLINE": "1",
         "TRANSFORMERS_OFFLINE": "1",
@@ -641,7 +662,7 @@ def test_probe_can_prove_a_locked_4090_sandbox_without_training(
         "OIMS_FORGE_SOURCE_TREE": "b" * 40,
     }
     completed = subprocess.CompletedProcess(
-        args=["nvidia-smi"],
+        args=[TEST_NVIDIA_SMI_PATH],
         returncode=0,
         stdout=(
             f"{reported_uuid}, {reported_name}, "
@@ -711,6 +732,8 @@ def test_probe_can_prove_a_locked_4090_sandbox_without_training(
     assert result["training_started"] is False
     assert result["qmf_admissible"] is False
     run.assert_called_once()
+    assert run.call_args.args[0][0] == TEST_NVIDIA_SMI_PATH
+    assert run.call_args.args[0][0] != "nvidia-smi"
 
 
 def test_malformed_plan_root_never_raises_from_public_validator() -> None:
@@ -998,6 +1021,7 @@ def test_probe_requires_current_memory_headroom(
     environment = {
         "OIMS_FORGE_ENABLE_PROBE": "1",
         "OIMS_FORGE_NVIDIA_RUNTIME_SHA256": "sha256:" + "d" * 64,
+        "OIMS_FORGE_NVIDIA_SMI_PATH": TEST_NVIDIA_SMI_PATH,
         "OIMS_FORGE_CONTAINER": "1",
         "HF_HUB_OFFLINE": "1",
         "TRANSFORMERS_OFFLINE": "1",
@@ -1054,6 +1078,7 @@ def test_probe_requires_process_level_output_write() -> None:
     environment = {
         "OIMS_FORGE_ENABLE_PROBE": "1",
         "OIMS_FORGE_NVIDIA_RUNTIME_SHA256": "sha256:" + "d" * 64,
+        "OIMS_FORGE_NVIDIA_SMI_PATH": TEST_NVIDIA_SMI_PATH,
         "OIMS_FORGE_CONTAINER": "1",
         "HF_HUB_OFFLINE": "1",
         "TRANSFORMERS_OFFLINE": "1",
@@ -1497,6 +1522,7 @@ def test_preimport_probe_passes_nvidia_attestation_to_runtime(
     digest = "sha256:" + "e" * 64
     records = ((Path("/usr/bin/nvidia-smi"), frozenset({"ro"})),)
     monkeypatch.delenv("OIMS_FORGE_NVIDIA_RUNTIME_SHA256", raising=False)
+    monkeypatch.setenv("OIMS_FORGE_NVIDIA_SMI_PATH", "/forge/inputs/base/nvidia-smi")
 
     with (
         patch.object(forge_entrypoint, "_mount_records", return_value=records),
@@ -1512,6 +1538,7 @@ def test_preimport_probe_passes_nvidia_attestation_to_runtime(
         forge_entrypoint.main(["forge", "probe"])
 
     assert os.environ["OIMS_FORGE_NVIDIA_RUNTIME_SHA256"] == digest
+    assert os.environ["OIMS_FORGE_NVIDIA_SMI_PATH"] == "/usr/bin/nvidia-smi"
 
 
 def test_oci_boundary_is_offline_unprivileged_and_non_training() -> None:
@@ -1569,6 +1596,7 @@ def test_oci_boundary_is_offline_unprivileged_and_non_training() -> None:
     assert "NATIVE_RUNTIME_ROOTS" in entrypoint
     assert "nvidia_runtime_mount_attestation" in entrypoint
     assert "OIMS_FORGE_NVIDIA_RUNTIME_SHA256" in entrypoint
+    assert "OIMS_FORGE_NVIDIA_SMI_PATH" in entrypoint
     assert "protected executable runtime contains an unexpected mount" in entrypoint
     launcher = (ROOT / "scripts" / "run_model_forge.ps1").read_text(encoding="utf-8")
     assert "status --porcelain=v1 --untracked-files=all" in launcher

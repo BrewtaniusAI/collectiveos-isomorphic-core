@@ -29,6 +29,7 @@ DYNAMIC_LOADER_CONFIGURATION = (
     Path("/etc/ld.so.preload"),
 )
 NVIDIA_RUNTIME_ATTESTATION_ENV = "OIMS_FORGE_NVIDIA_RUNTIME_SHA256"
+NVIDIA_SMI_PATH_ENV = "OIMS_FORGE_NVIDIA_SMI_PATH"
 NVIDIA_RUNTIME_EXECUTABLES = frozenset(
     {
         "nvidia-smi",
@@ -266,6 +267,11 @@ def nvidia_runtime_mount_attestation(
     return tuple(allowed), "sha256:" + digest.hexdigest()
 
 
+def attested_nvidia_smi_path(paths: tuple[Path, ...]) -> Path | None:
+    candidates = tuple(path for path in paths if path.name == "nvidia-smi")
+    return candidates[0] if len(candidates) == 1 else None
+
+
 def protected_mount_errors(
     package_root: Path,
     attestation_path: Path = ATTESTATION_PATH,
@@ -383,15 +389,22 @@ def main(arguments: list[str] | None = None) -> int:
     if argv == ["--seal-attestation"]:
         return seal_attestation()
     os.environ.pop(NVIDIA_RUNTIME_ATTESTATION_ENV, None)
+    os.environ.pop(NVIDIA_SMI_PATH_ENV, None)
     records = _mount_records()
     if records is None:
         errors = ("Forge runtime mount topology cannot be verified",)
         nvidia_attestation = None
+        nvidia_smi_path = None
     elif argv[:2] == ["forge", "probe"]:
         nvidia_attestation = nvidia_runtime_mount_attestation(records)
+        nvidia_smi_path = (
+            attested_nvidia_smi_path(nvidia_attestation[0])
+            if nvidia_attestation is not None
+            else None
+        )
         errors = (
             ("Forge NVIDIA runtime mounts cannot be attested",)
-            if nvidia_attestation is None
+            if nvidia_attestation is None or nvidia_smi_path is None
             else verify_installed_package(
                 observed_mounts=tuple(record[0] for record in records),
                 allowed_native_mounts=nvidia_attestation[0],
@@ -399,13 +412,15 @@ def main(arguments: list[str] | None = None) -> int:
         )
     else:
         nvidia_attestation = None
+        nvidia_smi_path = None
         errors = verify_installed_package(observed_mounts=tuple(record[0] for record in records))
     if errors:
         for error in errors:
             print(error, file=sys.stderr)
         return 70
-    if nvidia_attestation is not None:
+    if nvidia_attestation is not None and nvidia_smi_path is not None:
         os.environ[NVIDIA_RUNTIME_ATTESTATION_ENV] = nvidia_attestation[1]
+        os.environ[NVIDIA_SMI_PATH_ENV] = str(nvidia_smi_path)
     os.execv(sys.executable, [sys.executable, "-I", "-m", "oims", *argv])
     return 70
 
