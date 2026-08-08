@@ -86,9 +86,9 @@ The Compose environment is hardened independently of the Python validator:
 - one explicitly selected NVIDIA device for `probe`;
 - `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`, and `HF_DATASETS_OFFLINE=1`.
 
-Before a simulation can emit evidence, the pre-import entrypoint authenticates the proc, sysfs, and
-cgroup observation sources and cross-checks their mountinfo IDs against kernel `statx` mount IDs in
-the current process namespace. The runtime then observes UID/GID 65532, empty inheritable,
+Before a simulation can emit evidence, the pre-import entrypoint authenticates descriptor-bound
+procfs, sysfs, and cgroup2 filesystem magic and cross-checks mountinfo IDs against kernel `statx`
+mount IDs in the current process namespace. The runtime then observes UID/GID 65532, empty inheritable,
 permitted, effective, bounding, and ambient capability sets, no-new-privileges, seccomp filter mode
 plus the runtime-default allowlist's `EPERM` default-deny behavior and required keyring, `clone3`,
 `io_uring_setup`, and `userfaultfd` restrictions, a read-only root, loopback-only networking, the

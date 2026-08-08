@@ -1937,6 +1937,14 @@ def test_preimport_mountinfo_parser_preserves_cgroup_root() -> None:
     assert records[0].mount_id == 117
 
 
+def observation_filesystem_magic(path: Path) -> int:
+    if path == Path("/sys/fs/cgroup") or Path("/sys/fs/cgroup") in path.parents:
+        return forge_entrypoint.CGROUP2_SUPER_MAGIC
+    if path == Path("/sys") or Path("/sys") in path.parents:
+        return forge_entrypoint.SYSFS_MAGIC
+    return forge_entrypoint.PROC_SUPER_MAGIC
+
+
 def test_preimport_mountinfo_is_bound_to_the_current_mount_namespace() -> None:
     records = (
         forge_entrypoint.MountRecord(
@@ -1967,14 +1975,77 @@ def test_preimport_mountinfo_is_bound_to_the_current_mount_namespace() -> None:
             return 3
         return 2
 
-    with patch.object(forge_entrypoint, "_path_mount_id", side_effect=current_mount_id):
+    with (
+        patch.object(forge_entrypoint, "_path_mount_id", side_effect=current_mount_id),
+        patch.object(
+            forge_entrypoint,
+            "_path_filesystem_magic",
+            side_effect=observation_filesystem_magic,
+        ),
+    ):
         assert entrypoint_mount_records_bind_current_namespace(records)
 
     def helper_mount_id(path: Path) -> int:
         return 99 if path == forge_entrypoint.MOUNTINFO_PATH else current_mount_id(path)
 
-    with patch.object(forge_entrypoint, "_path_mount_id", side_effect=helper_mount_id):
+    with (
+        patch.object(forge_entrypoint, "_path_mount_id", side_effect=helper_mount_id),
+        patch.object(
+            forge_entrypoint,
+            "_path_filesystem_magic",
+            side_effect=observation_filesystem_magic,
+        ),
+    ):
         assert not entrypoint_mount_records_bind_current_namespace(records)
+
+
+def test_preimport_rejects_observation_filesystem_substitution() -> None:
+    records = (
+        forge_entrypoint.MountRecord(
+            Path("/"), frozenset({"ro"}), "overlay", "overlay", Path("/"), 1
+        ),
+        forge_entrypoint.MountRecord(
+            Path("/proc"), frozenset({"rw"}), "proc", "proc", Path("/"), 2
+        ),
+        forge_entrypoint.MountRecord(
+            Path("/sys"), frozenset({"ro"}), "sysfs", "sysfs", Path("/"), 3
+        ),
+        forge_entrypoint.MountRecord(
+            Path("/sys/fs/cgroup"),
+            frozenset({"ro"}),
+            "cgroup2",
+            "cgroup",
+            Path("/"),
+            4,
+        ),
+    )
+
+    def consistent_mount_id(path: Path) -> int:
+        if path == Path("/sys/fs/cgroup") or Path("/sys/fs/cgroup") in path.parents:
+            return 4
+        if path == Path("/sys") or Path("/sys") in path.parents:
+            return 3
+        return 2
+
+    def substituted_filesystem_magic(path: Path) -> int:
+        if path == forge_entrypoint.MOUNTINFO_PATH:
+            return 0xEF53
+        return observation_filesystem_magic(path)
+
+    with (
+        patch.object(forge_entrypoint, "_path_mount_id", side_effect=consistent_mount_id),
+        patch.object(
+            forge_entrypoint,
+            "_path_filesystem_magic",
+            side_effect=substituted_filesystem_magic,
+        ),
+    ):
+        assert not entrypoint_mount_records_bind_current_namespace(records)
+
+
+def test_proc_metadata_requires_procfs_descriptor_identity() -> None:
+    with patch.object(forge_entrypoint, "_descriptor_filesystem_magic", return_value=0xEF53):
+        assert forge_entrypoint._read_proc_metadata(Path("/proc/self/status")) is None
 
 
 @pytest.mark.parametrize(

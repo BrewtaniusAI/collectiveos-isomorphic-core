@@ -66,6 +66,9 @@ MAX_NVIDIA_APPROVAL_BYTES = 128 * 1024
 MAX_PROC_METADATA_BYTES = 16 * 1024 * 1024
 STATX_MNT_ID = 0x1000
 STATX_MNT_ID_OFFSET = 144
+PROC_SUPER_MAGIC = 0x9FA0
+SYSFS_MAGIC = 0x62656572
+CGROUP2_SUPER_MAGIC = 0x63677270
 
 
 class MountRecord(NamedTuple):
@@ -191,7 +194,11 @@ def _read_proc_metadata(path: Path) -> bytes | None:
         descriptor = os.open(path, flags)
         metadata = os.fstat(descriptor)
         proc_metadata = os.stat("/proc")
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_dev != proc_metadata.st_dev:
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_dev != proc_metadata.st_dev
+            or _descriptor_filesystem_magic(descriptor) != PROC_SUPER_MAGIC
+        ):
             return None
         payload = bytearray()
         while chunk := os.read(descriptor, MAX_PROC_METADATA_BYTES + 1 - len(payload)):
@@ -207,6 +214,36 @@ def _read_proc_metadata(path: Path) -> bytes | None:
             return None
         return bytes(payload)
     except (OSError, OverflowError):
+        return None
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def _descriptor_filesystem_magic(descriptor: int) -> int | None:
+    try:
+        fstatfs = ctypes.CDLL(None, use_errno=True).fstatfs
+        fstatfs.argtypes = (ctypes.c_int, ctypes.c_void_p)
+        fstatfs.restype = ctypes.c_int
+        buffer = ctypes.create_string_buffer(256)
+        if fstatfs(descriptor, buffer) != 0:
+            return None
+        return ctypes.c_ulong.from_buffer_copy(buffer.raw[: ctypes.sizeof(ctypes.c_ulong)]).value
+    except (AttributeError, OSError, TypeError, ValueError):
+        return None
+
+
+def _path_filesystem_magic(path: Path) -> int | None:
+    descriptor: int | None = None
+    try:
+        flags = (
+            getattr(os, "O_PATH", os.O_RDONLY)
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+        )
+        descriptor = os.open(path, flags)
+        return _descriptor_filesystem_magic(descriptor)
+    except OSError:
         return None
     finally:
         if descriptor is not None:
@@ -289,6 +326,14 @@ def _mount_records_bind_current_namespace(records: tuple[MountRecord, ...]) -> b
         dict.fromkeys((MOUNTINFO_PATH, PROCESS_MAPS_PATH, *SANDBOX_OBSERVATION_PATHS))
     )
     for path in authenticated_paths:
+        if path == Path("/sys/fs/cgroup") or Path("/sys/fs/cgroup") in path.parents:
+            expected_filesystem_magic = CGROUP2_SUPER_MAGIC
+        elif path == Path("/sys") or Path("/sys") in path.parents:
+            expected_filesystem_magic = SYSFS_MAGIC
+        else:
+            expected_filesystem_magic = PROC_SUPER_MAGIC
+        if _path_filesystem_magic(path) != expected_filesystem_magic:
+            return False
         candidates = tuple(
             record
             for record in records
