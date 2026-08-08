@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import stat
 import subprocess
 from pathlib import Path
@@ -113,6 +114,15 @@ def test_valid_escaped_surrogate_pair_is_normalized(tmp_path: Path) -> None:
     plan_path = tmp_path / "escaped-pair.json"
     plan_path.write_text('{"emoji":"\\ud83d\\ude00"}', encoding="utf-8")
     assert load_forge_plan(plan_path) == {"emoji": "😀"}
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFO inputs require POSIX")
+def test_non_regular_plan_input_fails_closed_without_reading(tmp_path: Path) -> None:
+    plan_fifo = tmp_path / "plan.fifo"
+    os.mkfifo(plan_fifo)
+
+    with pytest.raises(ForgePlanError, match="Forge plan must be a regular file"):
+        load_forge_plan(plan_fifo)
 
 
 @pytest.mark.parametrize(
@@ -449,6 +459,17 @@ def test_receipt_input_path_fails_closed_on_embedded_nul() -> None:
     result = verify_forge_run("\0")
     assert result["valid"] is False
     assert "cannot resolve Forge receipt path" in result["errors"][0]
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFO inputs require POSIX")
+def test_non_regular_receipt_input_fails_closed_without_reading(tmp_path: Path) -> None:
+    receipt_fifo = tmp_path / "receipt.fifo"
+    os.mkfifo(receipt_fifo)
+
+    result = verify_forge_run(receipt_fifo)
+
+    assert result["valid"] is False
+    assert result["errors"] == ["Forge receipt must be a regular file"]
 
 
 def test_probe_requires_exact_dual_unlock_before_device_inspection() -> None:

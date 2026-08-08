@@ -24,6 +24,7 @@ import math
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -609,19 +610,8 @@ def _check_positive_int(value: object, path: str, errors: list[str], *, zero: bo
 
 def load_forge_plan(path: Path | str) -> dict[str, Any]:
     plan_path = Path(path)
-    try:
-        size = plan_path.stat().st_size
-    except OSError as exc:
-        raise ForgePlanError(f"cannot stat Forge plan {plan_path}: {exc}") from exc
-    if size > MAX_PLAN_BYTES:
-        raise ForgePlanError(f"Forge plan exceeds {MAX_PLAN_BYTES} bytes")
-    try:
-        raw = _strict_json_loads(plan_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, ValueError) as exc:
-        raise ForgePlanError(f"cannot load Forge plan {plan_path}: {exc}") from exc
-    if not isinstance(raw, dict):
-        raise ForgePlanError("Forge plan root must be a JSON object")
-    return raw
+    payload = _read_bounded_bytes(plan_path, "Forge plan", max_bytes=MAX_PLAN_BYTES)
+    return _json_object_from_bytes(payload, plan_path, "Forge plan")
 
 
 def validate_forge_plan(plan: object) -> tuple[str, ...]:
@@ -1162,8 +1152,17 @@ def _read_bounded_bytes(
     *,
     max_bytes: int = MAX_RECORD_BYTES,
 ) -> bytes:
+    descriptor: int | None = None
     try:
-        with path.open("rb") as handle:
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ForgePlanError(f"{label} must be a regular file")
+        if metadata.st_size > max_bytes:
+            raise ForgePlanError(f"{label} exceeds {max_bytes} bytes")
+        handle = os.fdopen(descriptor, "rb")
+        descriptor = None
+        with handle:
             payload = handle.read(max_bytes + 1)
         if len(payload) > max_bytes:
             raise ForgePlanError(f"{label} exceeds {max_bytes} bytes")
@@ -1171,6 +1170,9 @@ def _read_bounded_bytes(
         raise
     except OSError as exc:
         raise ForgePlanError(f"cannot load {label} {path}: {exc}") from exc
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
     return payload
 
 
