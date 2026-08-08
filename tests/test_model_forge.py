@@ -1194,6 +1194,25 @@ def test_probe_mount_policy_rejects_writable_protected_input_submounts(
     assert policy[other_observation] is True
 
 
+def test_probe_mount_policy_rejects_writable_protected_input_ancestor() -> None:
+    mountinfo = (
+        "1 0 0:1 / /forge/plan.json ro - ext4 /dev/root ro\n"
+        "2 0 0:2 / /forge/inputs/base ro - ext4 /dev/root ro\n"
+        "3 0 0:3 / /forge/inputs/dataset ro - ext4 /dev/root ro\n"
+        "4 0 0:4 / /forge/output rw - ext4 /dev/root rw\n"
+        "5 0 0:5 / /tmp rw - tmpfs tmpfs rw\n"
+        "6 0 0:6 / /forge/inputs rw - ext4 /dev/root rw"
+    )
+    with (
+        patch("oims.model_forge.Path.read_text", return_value=mountinfo),
+        patch("oims.model_forge._output_path_process_writable", return_value=True),
+    ):
+        policy = _forge_mount_policy()
+
+    assert policy["base_model_read_only"] is False
+    assert policy["dataset_read_only"] is False
+
+
 def test_probe_cli_turns_receipt_write_failure_into_a_refusal(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

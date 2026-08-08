@@ -166,7 +166,8 @@ sets `capabilities: [gpu]` and an explicit device ID. See
 5. Non-root execution, empty Linux capabilities, no-new-privileges, and an active default seccomp
    filter.
 6. A read-only root, read-only plan/base/dataset mounts, a writable evidence mount, a successful
-   process-level create/write/fsync/delete probe as UID 65532, and tmpfs at `/tmp`.
+   process-level create/write/fsync/delete probe as UID 65532, no writable ancestor or descendant
+   mount covering either protected input, and tmpfs at `/tmp`.
 7. No default route, no interface other than loopback, and no swap use.
 8. Current cgroup usage subtracted from the cgroup RAM limit must leave the full plan ceiling;
    cgroup swap is zero and the PID limit is no greater than 512.

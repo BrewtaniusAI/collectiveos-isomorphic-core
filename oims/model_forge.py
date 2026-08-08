@@ -1695,7 +1695,9 @@ def _forge_mount_policy() -> dict[str, bool]:
         mount_path = PurePosixPath(mountpoint)
         options = set(fields[5].split(","))
         for protected_path, protected_observation in protected_input_paths.items():
-            if protected_path in mount_path.parents and ("ro" not in options or "rw" in options):
+            if (protected_path in mount_path.parents or mount_path in protected_path.parents) and (
+                "ro" not in options or "rw" in options
+            ):
                 writable_protected_submounts.add(protected_observation)
         observation = targets.get(mountpoint)
         if observation is None:
