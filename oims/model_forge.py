@@ -455,6 +455,19 @@ def _verified_execution_source(
         return None
     if completed.stdout.strip():
         return None
+    try:
+        index_flags = subprocess.run(
+            ["git", "-C", str(ROOT), "ls-files", "-v", "-z"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    tracked_entries = [entry for entry in index_flags.stdout.split("\0") if entry]
+    if any(not entry.startswith("H ") for entry in tracked_entries):
+        return None
     commit = current_git_commit(ROOT)
     if not _is_revision(commit):
         return None

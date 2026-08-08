@@ -483,6 +483,28 @@ def test_direct_simulation_refuses_dirty_source_before_writing(tmp_path: Path) -
     assert not list(tmp_path.iterdir())
 
 
+def test_direct_simulation_refuses_index_hidden_source_changes(tmp_path: Path) -> None:
+    clean_status = subprocess.CompletedProcess(
+        args=["git", "status"],
+        returncode=0,
+        stdout="",
+        stderr="",
+    )
+    hidden_index = subprocess.CompletedProcess(
+        args=["git", "ls-files"],
+        returncode=0,
+        stdout="h oims/model_forge.py\0",
+        stderr="",
+    )
+    with (
+        patch.dict("oims.model_forge.os.environ", {}, clear=True),
+        patch("oims.model_forge.subprocess.run", side_effect=[clean_status, hidden_index]),
+        pytest.raises(ForgePlanError, match="clean Git working tree"),
+    ):
+        simulate_forge_run(load_example(), artifacts_dir=tmp_path)
+    assert not list(tmp_path.iterdir())
+
+
 @pytest.mark.parametrize(
     ("memory_info", "cgroup_limits", "expected_error"),
     [
@@ -815,6 +837,7 @@ def test_oci_boundary_is_offline_unprivileged_and_non_training() -> None:
     assert "source.attestation" in containerfile
     launcher = (ROOT / "scripts" / "run_model_forge.ps1").read_text(encoding="utf-8")
     assert "status --porcelain=v1 --untracked-files=all" in launcher
+    assert "ls-files -v" in launcher
     assert "archive --format=tar" in launcher
     assert "$env:FORGE_BUILD_CONTEXT = $BuildContext" in launcher
     assert "Model Forge refuses a dirty build context" in launcher

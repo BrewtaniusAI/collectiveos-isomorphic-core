@@ -121,11 +121,12 @@ running container has no network. A physical toolchain lock must later hash the 
 image and every downloaded training wheel before the `train` state can be introduced.
 
 The launcher requires Git, verifies that `-SourceCommit` (when supplied) equals `HEAD`, refuses any
-tracked or untracked working-tree change, and uses `git archive` to construct a temporary Docker
-context from that exact commit. It records the exported commit and Git tree in an attestation that
-the image moves outside `/workspace`; the non-root runtime must match both values before using the
-container provenance shortcut. Compose refuses a working-tree context. This keeps the source
-recorded in Forge receipts bound to the exact source copied into the image.
+tracked or untracked working-tree change, rejects assume-unchanged/skip-worktree index flags, and
+uses `git archive` to construct a temporary Docker context from that exact commit. It records the
+exported commit and Git tree in an attestation that the image moves outside `/workspace`; the
+non-root runtime must match both values before using the container provenance shortcut. Compose
+refuses a working-tree context. This keeps the source recorded in Forge receipts bound to the exact
+source copied into the image.
 
 Docker documents GPU reservations through `deploy.resources.reservations.devices`; the Forge
 sets `capabilities: [gpu]` and an explicit device ID. See

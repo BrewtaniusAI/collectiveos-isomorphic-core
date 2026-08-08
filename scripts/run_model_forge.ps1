@@ -59,6 +59,14 @@ $SourceTree = (& git -C $RepositoryRoot rev-parse "${SourceCommit}^{tree}").Trim
 if ($LASTEXITCODE -ne 0 -or $SourceTree -notmatch '^[0-9a-f]{40}$') {
     throw 'Could not resolve the exact Model Forge source tree.'
 }
+$IndexFlags = @(& git -C $RepositoryRoot ls-files -v)
+if ($LASTEXITCODE -ne 0) {
+    throw "Could not inspect Model Forge index flags (exit $LASTEXITCODE)."
+}
+$HiddenIndexEntries = @($IndexFlags | Where-Object { $_ -notmatch '^H ' })
+if ($HiddenIndexEntries.Count -ne 0) {
+    throw 'Model Forge refuses assume-unchanged, skip-worktree, or other hidden index entries.'
+}
 $DirtyState = @(& git -C $RepositoryRoot status --porcelain=v1 --untracked-files=all)
 if ($LASTEXITCODE -ne 0) {
     throw "Could not verify the Model Forge build context (exit $LASTEXITCODE)."
