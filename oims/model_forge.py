@@ -49,14 +49,10 @@ MAX_SIMULATION_STEPS = 4096
 MAX_FORGE_OUTPUT_BYTES = 64 * 1024 * 1024
 DEFAULT_FORGE_ARTIFACTS_DIR = ROOT / "artifacts" / "model-forge"
 SOURCE_ATTESTATION_PATH = Path("/usr/local/share/oims-forge/source.attestation")
-NVIDIA_SMI_PATHS = frozenset(
-    {
-        "/bin/nvidia-smi",
-        "/sbin/nvidia-smi",
-        "/usr/bin/nvidia-smi",
-        "/usr/sbin/nvidia-smi",
-    }
-)
+NVIDIA_RUNTIME_FDS_ENV = "OIMS_FORGE_NVIDIA_RUNTIME_FDS"
+NVIDIA_LIBRARY_DIRECTORY_ENV = "OIMS_FORGE_NVIDIA_LIBRARY_DIRECTORY"
+NVIDIA_LIBRARY_DIRECTORY = "/tmp/oims-forge-nvidia-runtime"
+MAX_NVIDIA_RUNTIME_FDS = 256
 RFC3339_TIMESTAMP = re.compile(
     r"^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}"
     r"(?:\.[0-9]+)?(?:[Zz]|[+-][0-9]{2}:[0-9]{2})$"
@@ -509,15 +505,45 @@ def forge_container_environment_errors(
         errors.append("OIMS_FORGE_SOURCE_TREE is not an exact lowercase Git tree")
     if require_probe_unlock and not _is_digest(env.get("OIMS_FORGE_NVIDIA_RUNTIME_SHA256")):
         errors.append("OIMS_FORGE_NVIDIA_RUNTIME_SHA256 is not a pre-import runtime attestation")
+    if require_probe_unlock and _attested_nvidia_runtime_fds(env) is None:
+        errors.append("OIMS_FORGE_NVIDIA_RUNTIME_FDS is not a sealed descriptor set")
     if require_probe_unlock and _attested_nvidia_smi_path(env) is None:
         errors.append("OIMS_FORGE_NVIDIA_SMI_PATH is not an attested system executable")
+    if require_probe_unlock and env.get(NVIDIA_LIBRARY_DIRECTORY_ENV) != NVIDIA_LIBRARY_DIRECTORY:
+        errors.append("OIMS_FORGE_NVIDIA_LIBRARY_DIRECTORY is not the sealed runtime directory")
     errors.extend(_container_source_attestation_errors(env))
     return tuple(errors)
 
 
 def _attested_nvidia_smi_path(environment: dict[str, Any]) -> str | None:
     value = environment.get("OIMS_FORGE_NVIDIA_SMI_PATH")
-    return value if isinstance(value, str) and value in NVIDIA_SMI_PATHS else None
+    descriptors = _attested_nvidia_runtime_fds(environment)
+    if not isinstance(value, str) or descriptors is None:
+        return None
+    prefix = "/proc/self/fd/"
+    descriptor = value.removeprefix(prefix)
+    if not value.startswith(prefix) or not descriptor.isascii() or not descriptor.isdecimal():
+        return None
+    number = int(descriptor)
+    return value if str(number) == descriptor and number in descriptors else None
+
+
+def _attested_nvidia_runtime_fds(environment: dict[str, Any]) -> tuple[int, ...] | None:
+    value = environment.get(NVIDIA_RUNTIME_FDS_ENV)
+    if not isinstance(value, str) or not value:
+        return None
+    fields = value.split(",")
+    if len(fields) > MAX_NVIDIA_RUNTIME_FDS:
+        return None
+    descriptors: list[int] = []
+    for field in fields:
+        if not field.isascii() or not field.isdecimal():
+            return None
+        descriptor = int(field)
+        if descriptor < 3 or str(descriptor) != field or descriptor in descriptors:
+            return None
+        descriptors.append(descriptor)
+    return tuple(descriptors)
 
 
 def _verified_execution_source(
@@ -1969,6 +1995,8 @@ def inspect_physical_preflight(
         errors.append("Forge environment must be a mapping")
     env = environment if isinstance(environment, dict) else dict(os.environ)
     nvidia_smi_path = _attested_nvidia_smi_path(env)
+    nvidia_runtime_fds = _attested_nvidia_runtime_fds(env)
+    nvidia_library_directory = env.get(NVIDIA_LIBRARY_DIRECTORY_ENV)
     errors.extend(forge_container_environment_errors(env, require_probe_unlock=True))
     base_image_pinned = _is_immutable_image_ref(env.get("OIMS_FORGE_BASE_IMAGE"))
     provenance = _verified_execution_source(env) if env.get("OIMS_FORGE_CONTAINER") == "1" else None
@@ -2072,7 +2100,11 @@ def inspect_physical_preflight(
                 command,
                 check=True,
                 capture_output=True,
-                env={"LC_ALL": "C"},
+                env={
+                    "LC_ALL": "C",
+                    "LD_LIBRARY_PATH": str(nvidia_library_directory),
+                },
+                pass_fds=nvidia_runtime_fds or (),
                 text=True,
                 timeout=15,
             )

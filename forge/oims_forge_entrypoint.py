@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import fcntl
 import hashlib
 import os
 import stat
@@ -50,6 +51,9 @@ DYNAMIC_LOADER_CONFIGURATION = (
 )
 NVIDIA_RUNTIME_ATTESTATION_ENV = "OIMS_FORGE_NVIDIA_RUNTIME_SHA256"
 NVIDIA_SMI_PATH_ENV = "OIMS_FORGE_NVIDIA_SMI_PATH"
+NVIDIA_RUNTIME_FDS_ENV = "OIMS_FORGE_NVIDIA_RUNTIME_FDS"
+NVIDIA_LIBRARY_DIRECTORY_ENV = "OIMS_FORGE_NVIDIA_LIBRARY_DIRECTORY"
+NVIDIA_LIBRARY_DIRECTORY = Path("/tmp/oims-forge-nvidia-runtime")
 NVIDIA_RUNTIME_EXECUTABLES = frozenset(
     {
         "nvidia-smi",
@@ -83,6 +87,18 @@ class MountRecord(NamedTuple):
     source: str
     root: Path
     mount_id: int = 0
+
+
+class NvidiaRuntimeAttestation(NamedTuple):
+    paths: tuple[Path, ...]
+    digest: str
+    artifacts: tuple[tuple[Path, int], ...]
+
+
+class NvidiaRuntimeBinding(NamedTuple):
+    smi_path: Path
+    library_directory: Path
+    descriptors: tuple[int, ...]
 
 
 def _is_revision(value: object) -> bool:
@@ -467,10 +483,23 @@ def nvidia_runtime_approvals(
     return approvals or None
 
 
+def _create_sealable_memfd(name: str) -> int:
+    library = ctypes.CDLL(None, use_errno=True)
+    create = library.memfd_create
+    create.argtypes = (ctypes.c_char_p, ctypes.c_uint)
+    create.restype = ctypes.c_int
+    descriptor = create(name.encode("ascii"), getattr(os, "MFD_ALLOW_SEALING", 0x0002))
+    if descriptor < 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error))
+    os.set_inheritable(descriptor, False)
+    return descriptor
+
+
 def nvidia_runtime_mount_attestation(
     records: tuple[tuple[Path, frozenset[str]], ...],
     approvals_path: Path = NVIDIA_RUNTIME_APPROVALS_PATH,
-) -> tuple[tuple[Path, ...], str] | None:
+) -> NvidiaRuntimeAttestation | None:
     approvals = nvidia_runtime_approvals(approvals_path)
     if approvals is None:
         return None
@@ -482,56 +511,136 @@ def nvidia_runtime_mount_attestation(
         return None
     digest = hashlib.sha256(b"OIMS-NVIDIA-RUNTIME-MOUNTS-v1\0")
     allowed: list[Path] = []
+    artifacts: list[tuple[Path, int]] = []
     observed: set[Path] = set()
     total_bytes = 0
-    for record in candidates:
-        path, options = record[0], record[1]
-        if path in observed or "ro" not in options or "rw" in options:
-            return None
-        observed.add(path)
-        descriptor: int | None = None
-        try:
-            flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
-            descriptor = os.open(path, flags)
-            metadata = os.fstat(descriptor)
-            if not stat.S_ISREG(metadata.st_mode):
+    complete = False
+    try:
+        for record in candidates:
+            path, options = record[0], record[1]
+            if path in observed or "ro" not in options or "rw" in options:
                 return None
-            encoded_path = str(path).encode("utf-8")
-            digest.update(len(encoded_path).to_bytes(8, "big"))
-            digest.update(encoded_path)
-            digest.update(metadata.st_size.to_bytes(8, "big"))
-            file_digest = hashlib.sha256()
-            file_bytes = 0
-            while chunk := os.read(descriptor, 1024 * 1024):
-                file_bytes += len(chunk)
-                total_bytes += len(chunk)
-                if total_bytes > MAX_NVIDIA_RUNTIME_BYTES:
+            observed.add(path)
+            descriptor: int | None = None
+            sealed_descriptor: int | None = None
+            try:
+                flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+                descriptor = os.open(path, flags)
+                metadata = os.fstat(descriptor)
+                if not stat.S_ISREG(metadata.st_mode):
                     return None
-                digest.update(chunk)
-                file_digest.update(chunk)
-            final_metadata = os.fstat(descriptor)
-            if (
-                file_bytes != metadata.st_size
-                or final_metadata.st_dev != metadata.st_dev
-                or final_metadata.st_ino != metadata.st_ino
-                or final_metadata.st_size != metadata.st_size
-                or final_metadata.st_mtime_ns != metadata.st_mtime_ns
-            ):
+                sealed_descriptor = _create_sealable_memfd(f"oims-nvidia-{path.name}")
+                os.fchmod(sealed_descriptor, stat.S_IMODE(metadata.st_mode))
+                encoded_path = str(path).encode("utf-8")
+                digest.update(len(encoded_path).to_bytes(8, "big"))
+                digest.update(encoded_path)
+                digest.update(metadata.st_size.to_bytes(8, "big"))
+                file_digest = hashlib.sha256()
+                file_bytes = 0
+                while chunk := os.read(descriptor, 1024 * 1024):
+                    file_bytes += len(chunk)
+                    total_bytes += len(chunk)
+                    if total_bytes > MAX_NVIDIA_RUNTIME_BYTES:
+                        return None
+                    digest.update(chunk)
+                    file_digest.update(chunk)
+                    position = 0
+                    while position < len(chunk):
+                        position += os.write(sealed_descriptor, chunk[position:])
+                final_metadata = os.fstat(descriptor)
+                if (
+                    file_bytes != metadata.st_size
+                    or final_metadata.st_dev != metadata.st_dev
+                    or final_metadata.st_ino != metadata.st_ino
+                    or final_metadata.st_size != metadata.st_size
+                    or final_metadata.st_mtime_ns != metadata.st_mtime_ns
+                ):
+                    return None
+                if approvals.get(path) != "sha256:" + file_digest.hexdigest():
+                    return None
+                os.lseek(sealed_descriptor, 0, os.SEEK_SET)
+                seals = (
+                    getattr(fcntl, "F_SEAL_WRITE", 0x0008)
+                    | getattr(fcntl, "F_SEAL_GROW", 0x0004)
+                    | getattr(fcntl, "F_SEAL_SHRINK", 0x0002)
+                    | getattr(fcntl, "F_SEAL_SEAL", 0x0001)
+                )
+                add_seals = getattr(fcntl, "F_ADD_SEALS", 1033)
+                get_seals = getattr(fcntl, "F_GET_SEALS", 1034)
+                fcntl.fcntl(sealed_descriptor, add_seals, seals)
+                if fcntl.fcntl(sealed_descriptor, get_seals) != seals:
+                    return None
+                os.set_inheritable(sealed_descriptor, True)
+                artifacts.append((path, sealed_descriptor))
+                sealed_descriptor = None
+            except (AttributeError, OSError, OverflowError, UnicodeError):
                 return None
-            if approvals.get(path) != "sha256:" + file_digest.hexdigest():
-                return None
-        except (OSError, OverflowError, UnicodeError):
-            return None
-        finally:
-            if descriptor is not None:
+            finally:
+                if descriptor is not None:
+                    os.close(descriptor)
+                if sealed_descriptor is not None:
+                    os.close(sealed_descriptor)
+            allowed.append(path)
+        complete = True
+        return NvidiaRuntimeAttestation(
+            tuple(allowed),
+            "sha256:" + digest.hexdigest(),
+            tuple(artifacts),
+        )
+    finally:
+        if not complete:
+            for _, descriptor in artifacts:
                 os.close(descriptor)
-        allowed.append(path)
-    return tuple(allowed), "sha256:" + digest.hexdigest()
 
 
 def attested_nvidia_smi_path(paths: tuple[Path, ...]) -> Path | None:
     candidates = tuple(path for path in paths if path.name == "nvidia-smi")
     return candidates[0] if len(candidates) == 1 else None
+
+
+def bind_attested_nvidia_runtime(
+    attestation: NvidiaRuntimeAttestation,
+    library_directory: Path = NVIDIA_LIBRARY_DIRECTORY,
+) -> NvidiaRuntimeBinding | None:
+    artifact_map = dict(attestation.artifacts)
+    smi_source = attested_nvidia_smi_path(attestation.paths)
+    if smi_source is None or smi_source not in artifact_map:
+        return None
+    created: list[Path] = []
+    complete = False
+    try:
+        library_directory.mkdir(mode=0o700)
+        seen_names: set[str] = set()
+        for path, descriptor in attestation.artifacts:
+            if path == smi_source or path.name in NVIDIA_RUNTIME_EXECUTABLES:
+                continue
+            if path.name in seen_names:
+                return None
+            seen_names.add(path.name)
+            link = library_directory / path.name
+            link.symlink_to(f"/proc/self/fd/{descriptor}")
+            created.append(link)
+        descriptors = tuple(descriptor for _, descriptor in attestation.artifacts)
+        binding = NvidiaRuntimeBinding(
+            Path(f"/proc/self/fd/{artifact_map[smi_source]}"),
+            library_directory,
+            descriptors,
+        )
+        complete = True
+        return binding
+    except OSError:
+        return None
+    finally:
+        if not complete:
+            for link in reversed(created):
+                try:
+                    link.unlink()
+                except OSError:
+                    pass
+            try:
+                library_directory.rmdir()
+            except OSError:
+                pass
 
 
 def _cgroup_membership(path: Path = Path("/proc/self/cgroup")) -> str | None:
@@ -715,7 +824,10 @@ def main(arguments: list[str] | None = None) -> int:
         return seal_attestation()
     os.environ.pop(NVIDIA_RUNTIME_ATTESTATION_ENV, None)
     os.environ.pop(NVIDIA_SMI_PATH_ENV, None)
+    os.environ.pop(NVIDIA_RUNTIME_FDS_ENV, None)
+    os.environ.pop(NVIDIA_LIBRARY_DIRECTORY_ENV, None)
     records = _mount_records()
+    nvidia_binding = None
     if records is None or not _mount_records_bind_current_namespace(records):
         errors = ("Forge runtime mount topology cannot be verified",)
         nvidia_attestation = None
@@ -739,6 +851,10 @@ def main(arguments: list[str] | None = None) -> int:
                 cgroup_membership=cgroup_membership,
             )
         )
+        if not errors and nvidia_attestation is not None:
+            nvidia_binding = bind_attested_nvidia_runtime(nvidia_attestation)
+            if nvidia_binding is None:
+                errors = ("Forge NVIDIA runtime artifacts cannot be bound immutably",)
     elif argv[:2] == ["forge", "simulate"]:
         nvidia_attestation = None
         nvidia_smi_path = None
@@ -753,28 +869,43 @@ def main(arguments: list[str] | None = None) -> int:
         nvidia_smi_path = None
         errors = verify_installed_package(observed_mounts=tuple(record[0] for record in records))
     if errors:
+        if nvidia_attestation is not None:
+            for _, descriptor in nvidia_attestation.artifacts:
+                os.close(descriptor)
         for error in errors:
             print(error, file=sys.stderr)
         return 70
-    if nvidia_attestation is not None and nvidia_smi_path is not None:
+    if nvidia_attestation is not None and nvidia_binding is not None:
         os.environ[NVIDIA_RUNTIME_ATTESTATION_ENV] = nvidia_attestation[1]
-        os.environ[NVIDIA_SMI_PATH_ENV] = str(nvidia_smi_path)
+        os.environ[NVIDIA_SMI_PATH_ENV] = str(nvidia_binding.smi_path)
+        os.environ[NVIDIA_RUNTIME_FDS_ENV] = ",".join(
+            str(descriptor) for descriptor in nvidia_binding.descriptors
+        )
+        os.environ[NVIDIA_LIBRARY_DIRECTORY_ENV] = str(nvidia_binding.library_directory)
     root = installed_package_root()
     if root is None:
+        if nvidia_attestation is not None:
+            for _, descriptor in nvidia_attestation.artifacts:
+                os.close(descriptor)
         print("Forge installed package is not isolated from runtime shadowing", file=sys.stderr)
         return 70
-    os.execv(
-        sys.executable,
-        [
+    try:
+        os.execv(
             sys.executable,
-            "-I",
-            "-S",
-            "-c",
-            VERIFIED_PACKAGE_BOOTSTRAP,
-            str(root.parent),
-            *argv,
-        ],
-    )
+            [
+                sys.executable,
+                "-I",
+                "-S",
+                "-c",
+                VERIFIED_PACKAGE_BOOTSTRAP,
+                str(root.parent),
+                *argv,
+            ],
+        )
+    finally:
+        if nvidia_attestation is not None:
+            for _, descriptor in nvidia_attestation.artifacts:
+                os.close(descriptor)
     return 70
 
 

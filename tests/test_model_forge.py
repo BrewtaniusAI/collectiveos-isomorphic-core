@@ -51,7 +51,9 @@ from oims.proof import seal_record
 EXAMPLE = ROOT / "forge" / "examples" / "gpt-oss-20b-4090-simulation.plan.json"
 PROBE_EXAMPLE = ROOT / "forge" / "examples" / "gpt-oss-20b-4090-probe.plan.json"
 TEST_VERIFIED_SOURCE = ("a" * 40, "b" * 40)
-TEST_NVIDIA_SMI_PATH = "/usr/bin/nvidia-smi"
+TEST_NVIDIA_SMI_DESCRIPTOR = 7
+TEST_NVIDIA_SMI_PATH = f"/proc/self/fd/{TEST_NVIDIA_SMI_DESCRIPTOR}"
+TEST_NVIDIA_LIBRARY_DIRECTORY = "/tmp/oims-forge-nvidia-runtime"
 
 
 def sandbox_status(**overrides: str) -> dict[str, str]:
@@ -867,6 +869,8 @@ def test_probe_rejects_unattested_nvidia_smi_path_before_device_inspection() -> 
     environment = {
         "OIMS_FORGE_ENABLE_PROBE": "1",
         "OIMS_FORGE_NVIDIA_RUNTIME_SHA256": "sha256:" + "d" * 64,
+        "OIMS_FORGE_NVIDIA_RUNTIME_FDS": str(TEST_NVIDIA_SMI_DESCRIPTOR),
+        "OIMS_FORGE_NVIDIA_LIBRARY_DIRECTORY": TEST_NVIDIA_LIBRARY_DIRECTORY,
         "OIMS_FORGE_NVIDIA_SMI_PATH": "/forge/inputs/base/nvidia-smi",
     }
     with patch("oims.model_forge.subprocess.run") as run:
@@ -883,6 +887,8 @@ def test_refused_probe_omits_unverified_source_provenance() -> None:
     environment = {
         "OIMS_FORGE_ENABLE_PROBE": "1",
         "OIMS_FORGE_NVIDIA_RUNTIME_SHA256": "sha256:" + "d" * 64,
+        "OIMS_FORGE_NVIDIA_RUNTIME_FDS": str(TEST_NVIDIA_SMI_DESCRIPTOR),
+        "OIMS_FORGE_NVIDIA_LIBRARY_DIRECTORY": TEST_NVIDIA_LIBRARY_DIRECTORY,
         "OIMS_FORGE_NVIDIA_SMI_PATH": TEST_NVIDIA_SMI_PATH,
         "OIMS_FORGE_CONTAINER": "1",
         "HF_HUB_OFFLINE": "1",
@@ -968,6 +974,8 @@ def test_probe_can_prove_a_locked_4090_sandbox_without_training(
     environment = {
         "OIMS_FORGE_ENABLE_PROBE": "1",
         "OIMS_FORGE_NVIDIA_RUNTIME_SHA256": "sha256:" + "d" * 64,
+        "OIMS_FORGE_NVIDIA_RUNTIME_FDS": str(TEST_NVIDIA_SMI_DESCRIPTOR),
+        "OIMS_FORGE_NVIDIA_LIBRARY_DIRECTORY": TEST_NVIDIA_LIBRARY_DIRECTORY,
         "OIMS_FORGE_NVIDIA_SMI_PATH": TEST_NVIDIA_SMI_PATH,
         "PATH": "/forge/inputs/base:/usr/bin",
         "LD_LIBRARY_PATH": "/forge/inputs/base",
@@ -1051,7 +1059,11 @@ def test_probe_can_prove_a_locked_4090_sandbox_without_training(
     run.assert_called_once()
     assert run.call_args.args[0][0] == TEST_NVIDIA_SMI_PATH
     assert run.call_args.args[0][0] != "nvidia-smi"
-    assert run.call_args.kwargs["env"] == {"LC_ALL": "C"}
+    assert run.call_args.kwargs["env"] == {
+        "LC_ALL": "C",
+        "LD_LIBRARY_PATH": TEST_NVIDIA_LIBRARY_DIRECTORY,
+    }
+    assert run.call_args.kwargs["pass_fds"] == (TEST_NVIDIA_SMI_DESCRIPTOR,)
 
 
 def test_malformed_plan_root_never_raises_from_public_validator() -> None:
@@ -1355,6 +1367,8 @@ def test_probe_requires_current_memory_headroom(
     environment = {
         "OIMS_FORGE_ENABLE_PROBE": "1",
         "OIMS_FORGE_NVIDIA_RUNTIME_SHA256": "sha256:" + "d" * 64,
+        "OIMS_FORGE_NVIDIA_RUNTIME_FDS": str(TEST_NVIDIA_SMI_DESCRIPTOR),
+        "OIMS_FORGE_NVIDIA_LIBRARY_DIRECTORY": TEST_NVIDIA_LIBRARY_DIRECTORY,
         "OIMS_FORGE_NVIDIA_SMI_PATH": TEST_NVIDIA_SMI_PATH,
         "OIMS_FORGE_CONTAINER": "1",
         "HF_HUB_OFFLINE": "1",
@@ -1412,6 +1426,8 @@ def test_probe_requires_process_level_output_write() -> None:
     environment = {
         "OIMS_FORGE_ENABLE_PROBE": "1",
         "OIMS_FORGE_NVIDIA_RUNTIME_SHA256": "sha256:" + "d" * 64,
+        "OIMS_FORGE_NVIDIA_RUNTIME_FDS": str(TEST_NVIDIA_SMI_DESCRIPTOR),
+        "OIMS_FORGE_NVIDIA_LIBRARY_DIRECTORY": TEST_NVIDIA_LIBRARY_DIRECTORY,
         "OIMS_FORGE_NVIDIA_SMI_PATH": TEST_NVIDIA_SMI_PATH,
         "OIMS_FORGE_CONTAINER": "1",
         "HF_HUB_OFFLINE": "1",
@@ -2096,9 +2112,66 @@ def test_nvidia_runtime_mount_attestation_hashes_read_only_regular_files(
         attestation = forge_entrypoint.nvidia_runtime_mount_attestation(records, approvals)
 
     assert attestation is not None
-    assert attestation[0] == (runtime_file,)
-    assert attestation[1].startswith("sha256:")
-    assert len(attestation[1]) == 71
+    try:
+        assert attestation.paths == (runtime_file,)
+        assert attestation.digest.startswith("sha256:")
+        assert len(attestation.digest) == 71
+        assert len(attestation.artifacts) == 1
+    finally:
+        os.close(attestation.artifacts[0][1])
+
+
+def test_nvidia_runtime_attestation_seals_bytes_against_host_mutation(tmp_path: Path) -> None:
+    runtime_file = tmp_path / "nvidia-smi"
+    trusted = b"trusted NVIDIA executable\n"
+    runtime_file.write_bytes(trusted)
+    approvals = tmp_path / "nvidia-runtime.approved"
+    approvals.write_text(
+        f"{runtime_file}=sha256:{hashlib.sha256(trusted).hexdigest()}\n",
+        encoding="ascii",
+    )
+    records = ((runtime_file, frozenset({"ro"})),)
+
+    with patch.object(forge_entrypoint, "_is_nvidia_runtime_path", return_value=True):
+        attestation = forge_entrypoint.nvidia_runtime_mount_attestation(records, approvals)
+
+    assert attestation is not None
+    descriptor = attestation.artifacts[0][1]
+    try:
+        runtime_file.write_bytes(b"telemetry-forging replacement\n")
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        assert os.read(descriptor, len(trusted) + 1) == trusted
+        with pytest.raises(OSError):
+            os.write(descriptor, b"mutation")
+    finally:
+        os.close(descriptor)
+
+
+def test_nvidia_runtime_binding_uses_sealed_executable_and_library_descriptors(
+    tmp_path: Path,
+) -> None:
+    smi = Path("/usr/bin/nvidia-smi")
+    library = Path("/usr/lib/libnvidia-ml.so.1")
+    smi_descriptor = forge_entrypoint._create_sealable_memfd("test-nvidia-smi")
+    library_descriptor = forge_entrypoint._create_sealable_memfd("test-libnvidia-ml")
+    attestation = forge_entrypoint.NvidiaRuntimeAttestation(
+        (smi, library),
+        "sha256:" + "d" * 64,
+        ((smi, smi_descriptor), (library, library_descriptor)),
+    )
+    runtime_directory = tmp_path / "runtime"
+
+    try:
+        binding = forge_entrypoint.bind_attested_nvidia_runtime(attestation, runtime_directory)
+        assert binding is not None
+        assert binding.smi_path == Path(f"/proc/self/fd/{smi_descriptor}")
+        assert binding.descriptors == (smi_descriptor, library_descriptor)
+        assert (runtime_directory / library.name).readlink() == Path(
+            f"/proc/self/fd/{library_descriptor}"
+        )
+    finally:
+        os.close(smi_descriptor)
+        os.close(library_descriptor)
 
 
 def test_nvidia_runtime_mount_attestation_rejects_unapproved_bytes(tmp_path: Path) -> None:
@@ -2134,7 +2207,19 @@ def test_preimport_probe_passes_nvidia_attestation_to_runtime(
     digest = "sha256:" + "e" * 64
     records = ((Path("/usr/bin/nvidia-smi"), frozenset({"ro"})),)
     package_root = Path("/usr/local/lib/python/site-packages/oims")
+    attestation = forge_entrypoint.NvidiaRuntimeAttestation(
+        (records[0][0],),
+        digest,
+        ((records[0][0], TEST_NVIDIA_SMI_DESCRIPTOR),),
+    )
+    binding = forge_entrypoint.NvidiaRuntimeBinding(
+        Path(TEST_NVIDIA_SMI_PATH),
+        Path(TEST_NVIDIA_LIBRARY_DIRECTORY),
+        (TEST_NVIDIA_SMI_DESCRIPTOR,),
+    )
     monkeypatch.delenv("OIMS_FORGE_NVIDIA_RUNTIME_SHA256", raising=False)
+    monkeypatch.delenv("OIMS_FORGE_NVIDIA_RUNTIME_FDS", raising=False)
+    monkeypatch.delenv("OIMS_FORGE_NVIDIA_LIBRARY_DIRECTORY", raising=False)
     monkeypatch.setenv("OIMS_FORGE_NVIDIA_SMI_PATH", "/forge/inputs/base/nvidia-smi")
 
     with (
@@ -2142,17 +2227,21 @@ def test_preimport_probe_passes_nvidia_attestation_to_runtime(
         patch.object(
             forge_entrypoint,
             "nvidia_runtime_mount_attestation",
-            return_value=((records[0][0],), digest),
+            return_value=attestation,
         ),
+        patch.object(forge_entrypoint, "bind_attested_nvidia_runtime", return_value=binding),
         patch.object(forge_entrypoint, "verify_installed_package", return_value=()),
         patch.object(forge_entrypoint, "installed_package_root", return_value=package_root),
+        patch.object(forge_entrypoint.os, "close"),
         patch.object(forge_entrypoint.os, "execv", side_effect=OSError("exec intercepted")),
         pytest.raises(OSError, match="exec intercepted"),
     ):
         forge_entrypoint.main(["forge", "probe"])
 
     assert os.environ["OIMS_FORGE_NVIDIA_RUNTIME_SHA256"] == digest
-    assert os.environ["OIMS_FORGE_NVIDIA_SMI_PATH"] == "/usr/bin/nvidia-smi"
+    assert os.environ["OIMS_FORGE_NVIDIA_SMI_PATH"] == TEST_NVIDIA_SMI_PATH
+    assert os.environ["OIMS_FORGE_NVIDIA_RUNTIME_FDS"] == str(TEST_NVIDIA_SMI_DESCRIPTOR)
+    assert os.environ["OIMS_FORGE_NVIDIA_LIBRARY_DIRECTORY"] == TEST_NVIDIA_LIBRARY_DIRECTORY
 
 
 def test_preimport_simulation_authenticates_runtime_observation_sources() -> None:
@@ -2304,6 +2393,11 @@ def test_oci_boundary_is_offline_unprivileged_and_non_training() -> None:
     assert "nvidia_runtime_approvals" in entrypoint
     assert "OIMS_FORGE_NVIDIA_RUNTIME_SHA256" in entrypoint
     assert "OIMS_FORGE_NVIDIA_SMI_PATH" in entrypoint
+    assert "_create_sealable_memfd" in entrypoint
+    assert "F_ADD_SEALS" in entrypoint
+    assert "bind_attested_nvidia_runtime" in entrypoint
+    assert 'Path(f"/proc/self/fd/{artifact_map[smi_source]}")' in entrypoint
+    assert 'link.symlink_to(f"/proc/self/fd/{descriptor}")' in entrypoint
     assert "protected executable runtime contains an unexpected mount" in entrypoint
     assert "sys.flags.no_site" in entrypoint
     assert "nvidia-runtime.approved" in containerfile
@@ -2382,6 +2476,8 @@ def test_launcher_binds_case_sensitive_mount_paths_and_revalidates_identity() ->
     assert "function Assert-ForgeHostMountIdentity" in launcher
     assert "$CurrentPath -cne $ExpectedPath" in launcher
     assert "$CurrentSnapshot.CanonicalPath -cne" in launcher
+    assert "$ExpectedSnapshots['Output'].BackingIdentity -ceq" in launcher
+    assert "must not share a backing filesystem object" in launcher
     assert "-Left $CurrentCanonicalPaths['Output']" in launcher
     assert "$BoundPaths[$Name] = [string]$ExpectedSnapshot.BoundPath" in launcher
     assert "$Volume.source = $BoundMountSources[[string]$Volume.target]" in launcher

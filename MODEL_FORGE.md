@@ -168,11 +168,12 @@ Every individual path and digest must match the source-controlled
 `forge/nvidia-runtime.approved` manifest embedded in the clean, commit-exported image; the checked-in
 comment-only manifest deliberately denies all physical probes until maintainers commit the exact
 trusted Toolkit/driver file hashes and rebuild. The authenticated aggregate digest is carried into
-the physical-preflight receipt. The verifier also exports
-the single attested absolute `nvidia-smi` mount path, and the probe invokes that path directly so
-an executable earlier on caller-controlled `PATH` cannot substitute the inspected utility. The
-child receives only a fixed C-locale environment, so inherited dynamic-loader overrides cannot
-redirect it to code beneath an admitted input mount.
+the physical-preflight receipt. The verifier also copies the single attested `nvidia-smi` artifact
+into an inherited write-sealed memfd, and the probe invokes its `/proc/self/fd/<fd>` path directly
+so neither `PATH` nor a later host write can substitute the inspected utility. Every approved
+NVIDIA library is copied into its own sealed memfd; a private tmpfs directory contains only
+descriptor symlinks for those exact files, and the child gets that directory as its sole
+`LD_LIBRARY_PATH`. Other inherited dynamic-loader overrides are absent.
 An NVIDIA file already mapped before verification, a writable or non-regular file, an entire
 runtime-root mount, or any non-NVIDIA executable-runtime mount still fails closed. Compose refuses
 a working-tree context, and the launcher rejects any resolved service, entrypoint, user, build
@@ -183,7 +184,9 @@ additional capability or device field. Rendered Linux paths are compared case-se
 launcher records OS filesystem identities and descriptor-bound canonical paths for the plan and all
 three host directories, then re-resolves and rechecks both those snapshots after the image build.
 Output/input disjointness is recomputed from the current canonical paths immediately before
-execution, so moving an identity-preserving object behind a symlink or junction fails closed. It
+execution, and backing device/inode identity is compared independently of Linux mount ID so aliases
+through distinct bind mountpoints also fail closed. Moving an identity-preserving object behind a
+symlink or junction therefore fails as well. It
 then rebinds every Linux mount source to the held launcher's `/proc/<pid>/fd/<fd>` object; on
 Windows, non-delete-sharing filesystem handles retain the verified names until Compose returns.
 Those leases close the final check-to-bind race. The launcher executes that exact rendered snapshot

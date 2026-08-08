@@ -71,6 +71,7 @@ using Microsoft.Win32.SafeHandles;
 public sealed class OimsForgePathSnapshot : IDisposable
 {
     public string Identity { get; private set; }
+    public string BackingIdentity { get; private set; }
     public string CanonicalPath { get; private set; }
     public string BoundPath { get; private set; }
     private SafeFileHandle WindowsHandle;
@@ -78,11 +79,13 @@ public sealed class OimsForgePathSnapshot : IDisposable
 
     internal OimsForgePathSnapshot(
         string identity,
+        string backingIdentity,
         string canonicalPath,
         string boundPath,
         SafeFileHandle windowsHandle)
     {
         Identity = identity;
+        BackingIdentity = backingIdentity;
         CanonicalPath = canonicalPath;
         BoundPath = boundPath;
         WindowsHandle = windowsHandle;
@@ -90,11 +93,13 @@ public sealed class OimsForgePathSnapshot : IDisposable
 
     internal OimsForgePathSnapshot(
         string identity,
+        string backingIdentity,
         string canonicalPath,
         string boundPath,
         int linuxDescriptor)
     {
         Identity = identity;
+        BackingIdentity = backingIdentity;
         CanonicalPath = canonicalPath;
         BoundPath = boundPath;
         LinuxDescriptor = linuxDescriptor;
@@ -239,6 +244,7 @@ public static class OimsForgePathIdentity
                 );
                 return new OimsForgePathSnapshot(
                     identity,
+                    identity,
                     canonicalPath.ToString(),
                     path,
                     handle
@@ -290,6 +296,13 @@ public static class OimsForgePathIdentity
                     buffer.Inode,
                     buffer.MountId
                 );
+                string backingIdentity = String.Format(
+                    "linux:{0:x4}:{1:x8}:{2:x8}:{3:x16}",
+                    buffer.Mode,
+                    buffer.DeviceMajor,
+                    buffer.DeviceMinor,
+                    buffer.Inode
+                );
                 string boundPath = String.Format(
                     "/proc/{0}/fd/{1}",
                     Environment.ProcessId,
@@ -297,6 +310,7 @@ public static class OimsForgePathIdentity
                 );
                 return new OimsForgePathSnapshot(
                     identity,
+                    backingIdentity,
                     canonicalPath,
                     boundPath,
                     fileDescriptor
@@ -304,7 +318,7 @@ public static class OimsForgePathIdentity
             }
             catch
             {
-                new OimsForgePathSnapshot("", "", "", fileDescriptor).Dispose();
+                new OimsForgePathSnapshot("", "", "", "", fileDescriptor).Dispose();
                 throw;
             }
         }
@@ -348,6 +362,12 @@ function Assert-ForgeHostMountIdentity {
         }
     }
     foreach ($ProtectedName in @('Plan', 'BaseModel', 'Dataset')) {
+        if (
+            [string]$ExpectedSnapshots['Output'].BackingIdentity -ceq
+            [string]$ExpectedSnapshots[$ProtectedName].BackingIdentity
+        ) {
+            throw 'OutputDir must not share a backing filesystem object with a protected input.'
+        }
         if (
             Test-PathsOverlap `
                 -Left $CurrentCanonicalPaths['Output'] `
