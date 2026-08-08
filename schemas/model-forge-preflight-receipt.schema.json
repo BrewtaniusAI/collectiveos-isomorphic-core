@@ -69,6 +69,7 @@
         "dataset_read_only",
         "output_writable",
         "output_process_writable",
+        "no_unexpected_writable_mounts",
         "tmpfs_active",
         "swap_total_bytes",
         "swap_used_bytes",
@@ -94,6 +95,7 @@
         "dataset_read_only": {"type": "boolean"},
         "output_writable": {"type": "boolean"},
         "output_process_writable": {"type": "boolean"},
+        "no_unexpected_writable_mounts": {"type": "boolean"},
         "tmpfs_active": {"type": "boolean"},
         "swap_total_bytes": {"type": "integer", "minimum": -1},
         "swap_used_bytes": {
@@ -225,6 +227,7 @@
               "dataset_read_only": {"const": true},
               "output_writable": {"const": true},
               "output_process_writable": {"const": true},
+              "no_unexpected_writable_mounts": {"const": true},
               "tmpfs_active": {"const": true},
               "swap_used_bytes": {"const": 0},
               "container_memory_limit_bytes": {"type": "integer", "minimum": 1},

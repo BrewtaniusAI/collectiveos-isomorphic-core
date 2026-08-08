@@ -81,12 +81,13 @@ SIMULATION_LIMITATIONS = [
 ]
 CAPABILITY_STATUS_FIELDS = ("CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb")
 EMPTY_CAPABILITY_MASK = "0000000000000000"
-SECCOMP_KEYRING_SYSCALLS = {
-    "aarch64": (217, 218, 219),
-    "amd64": (248, 249, 250),
-    "arm64": (217, 218, 219),
-    "x86_64": (248, 249, 250),
+SECCOMP_PROBE_SYSCALLS = {
+    "aarch64": (217, 218, 219, 435, 425, 282),
+    "amd64": (248, 249, 250, 435, 425, 323),
+    "arm64": (217, 218, 219, 435, 425, 282),
+    "x86_64": (248, 249, 250, 435, 425, 323),
 }
+SECCOMP_UNKNOWN_SYSCALL = 0x7FFFFFFF
 
 TOP_LEVEL_KEYS = {
     "schema_version",
@@ -1794,28 +1795,45 @@ def _linux_capability_sets_empty(status: dict[str, str]) -> bool:
 
 
 def _runtime_default_seccomp_denials_active() -> bool:
-    syscall_numbers = SECCOMP_KEYRING_SYSCALLS.get(platform.machine().lower())
+    syscall_numbers = SECCOMP_PROBE_SYSCALLS.get(platform.machine().lower())
     if syscall_numbers is None:
         return False
     probes = (
-        (syscall_numbers[0], (0, 0, 0, 0, -1)),
-        (syscall_numbers[1], (0, 0, 0, -1)),
-        (syscall_numbers[2], (-1, 0, 0, 0, 0)),
+        (syscall_numbers[0], (0, 0, 0, 0, -1), errno.EPERM),
+        (syscall_numbers[1], (0, 0, 0, -1), errno.EPERM),
+        (syscall_numbers[2], (-1, 0, 0, 0, 0), errno.EPERM),
+        # Docker's runtime-default profile is an allowlist with EPERM as its default action.
+        # An allow-by-default custom filter reaches the kernel here and returns ENOSYS instead.
+        (SECCOMP_UNKNOWN_SYSCALL, (), errno.EPERM),
+        # These high-risk calls exercise explicit/default policy behavior beyond key management.
+        (syscall_numbers[3], (0, 0), errno.ENOSYS),
+        (syscall_numbers[4], (0, 0), errno.EPERM),
+        (syscall_numbers[5], (-1,), errno.EPERM),
     )
     try:
         syscall = ctypes.CDLL(None, use_errno=True).syscall
         syscall.restype = ctypes.c_long
-        for number, arguments in probes:
+        for number, arguments, expected_errno in probes:
             ctypes.set_errno(0)
             result = syscall(
                 ctypes.c_long(number),
                 *(ctypes.c_long(argument) for argument in arguments),
             )
-            if result != -1 or ctypes.get_errno() != errno.EPERM:
+            if result != -1 or ctypes.get_errno() != expected_errno:
                 return False
     except (AttributeError, OSError, TypeError, ValueError):
         return False
     return True
+
+
+def _forge_output_mount_matches(plan: object, artifacts_dir: Path) -> bool:
+    root = plan if isinstance(plan, dict) else {}
+    sandbox = root.get("sandbox")
+    expected_output = sandbox.get("output_mount") if isinstance(sandbox, dict) else None
+    try:
+        return artifacts_dir.resolve() == Path(expected_output).resolve()
+    except (OSError, RuntimeError, TypeError):
+        return False
 
 
 def _forge_runtime_sandbox_errors(
@@ -1843,19 +1861,7 @@ def _forge_runtime_sandbox_errors(
     if _network_interfaces() != {"lo"}:
         errors.append("Forge sandbox exposes a non-loopback network interface")
 
-    sandbox = plan.get("sandbox")
-    expected_output = sandbox.get("output_mount") if isinstance(sandbox, dict) else None
-    try:
-        resolved_output = artifacts_dir.resolve()
-        resolved_expected_output = Path(expected_output).resolve()
-    except (OSError, RuntimeError, TypeError):
-        resolved_output = None
-        resolved_expected_output = None
-    if (
-        resolved_output is None
-        or resolved_expected_output is None
-        or resolved_output != resolved_expected_output
-    ):
+    if not _forge_output_mount_matches(plan, artifacts_dir):
         errors.append("Forge simulation output is not the exact evidence mount")
 
     for observation, valid in _forge_mount_policy().items():

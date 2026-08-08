@@ -14,6 +14,7 @@ import pytest
 import yaml
 
 import forge.oims_forge_entrypoint as forge_entrypoint
+import oims.cli as cli_module
 import oims.model_forge as model_forge_module
 from forge.oims_forge_entrypoint import package_digest as entrypoint_package_digest
 from forge.oims_forge_entrypoint import protected_mount_errors, verify_installed_package
@@ -23,6 +24,7 @@ from oims.model_forge import (
     EXPECTED_TARGET_PARAMETERS,
     ForgePlanError,
     _forge_mount_policy,
+    _forge_output_mount_matches,
     _forge_runtime_sandbox_errors,
     _installed_package_digest,
     _linux_capability_sets_empty,
@@ -76,6 +78,7 @@ def attested_source_for_forge_exercises(
         "_runtime_default_seccomp_denials_active",
         lambda: True,
     )
+    monkeypatch.setattr(cli_module, "_forge_output_mount_matches", lambda plan, output: True)
     if request.node.get_closest_marker("direct_source"):
         return
     original = model_forge_module._verified_execution_source
@@ -420,17 +423,34 @@ def test_every_linux_capability_set_must_be_empty(field: str) -> None:
 
 
 @pytest.mark.parametrize(
-    ("observed_errno", "expected"), [(errno.EPERM, True), (errno.EINVAL, False)]
+    ("observed_errnos", "expected"),
+    [
+        (
+            (
+                errno.EPERM,
+                errno.EPERM,
+                errno.EPERM,
+                errno.EPERM,
+                errno.ENOSYS,
+                errno.EPERM,
+                errno.EPERM,
+            ),
+            True,
+        ),
+        ((errno.EINVAL,), False),
+    ],
 )
-def test_seccomp_denial_probe_requires_blocked_keyring_syscalls(
-    observed_errno: int,
+def test_seccomp_probe_requires_the_complete_denial_contract(
+    observed_errnos: tuple[int, ...],
     expected: bool,
 ) -> None:
+    responses = iter(observed_errnos)
+
     class FakeSyscall:
         restype: object = None
 
         def __call__(self, *_arguments: object) -> int:
-            ctypes.set_errno(observed_errno)
+            ctypes.set_errno(next(responses))
             return -1
 
     class FakeLibc:
@@ -441,6 +461,26 @@ def test_seccomp_denial_probe_requires_blocked_keyring_syscalls(
         patch("oims.model_forge.ctypes.CDLL", return_value=FakeLibc()),
     ):
         assert _runtime_default_seccomp_denials_active() is expected
+
+
+def test_seccomp_probe_rejects_allow_by_default_filter_with_only_keyring_denials() -> None:
+    observed_errnos = iter((errno.EPERM, errno.EPERM, errno.EPERM, errno.ENOSYS))
+
+    class FakeSyscall:
+        restype: object = None
+
+        def __call__(self, *_arguments: object) -> int:
+            ctypes.set_errno(next(observed_errnos))
+            return -1
+
+    class FakeLibc:
+        syscall = FakeSyscall()
+
+    with (
+        patch("oims.model_forge.platform.machine", return_value="x86_64"),
+        patch("oims.model_forge.ctypes.CDLL", return_value=FakeLibc()),
+    ):
+        assert not _runtime_default_seccomp_denials_active()
 
 
 def test_simulation_refuses_unproven_runtime_isolation_before_writing(tmp_path: Path) -> None:
@@ -1438,6 +1478,40 @@ def test_forge_mount_policy_rejects_writable_mount_outside_evidence_directory() 
     assert policy["no_unexpected_writable_mounts"] is False
 
 
+def test_forge_output_must_match_the_declared_evidence_mount() -> None:
+    assert _forge_output_mount_matches(probe_plan(), Path("/forge/output"))
+    assert not _forge_output_mount_matches(probe_plan(), Path("/tmp"))
+
+
+def test_probe_cli_refuses_output_override_before_probe_or_write(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with (
+        patch("oims.cli._forge_output_mount_matches", return_value=False),
+        patch("oims.cli.inspect_physical_preflight") as inspect,
+        patch("oims.cli.atomic_create_json") as create_receipt,
+    ):
+        exit_code = cli_main(
+            [
+                "forge",
+                "probe",
+                "--plan",
+                str(PROBE_EXAMPLE),
+                "--accept-plan-hash",
+                probe_plan()["plan_hash"],
+                "--output",
+                str(tmp_path),
+            ]
+        )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 2
+    assert any("output is not the exact evidence mount" in error for error in payload["errors"])
+    inspect.assert_not_called()
+    create_receipt.assert_not_called()
+
+
 def test_probe_cli_turns_receipt_write_failure_into_a_refusal(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -2024,3 +2098,7 @@ def test_forge_receipt_schemas_refuse_undeclared_fields_and_match_runtime(tmp_pa
     assert preflight_schema["additionalProperties"] is False
     assert set(preflight_schema["required"]) == set(preflight_schema["properties"])
     assert set(preflight_receipt) == set(preflight_schema["properties"])
+    sandbox_schema = preflight_schema["properties"]["sandbox_observation"]
+    assert sandbox_schema["additionalProperties"] is False
+    assert set(sandbox_schema["required"]) == set(sandbox_schema["properties"])
+    assert set(preflight_receipt["sandbox_observation"]) == set(sandbox_schema["properties"])

@@ -16,6 +16,7 @@ from .manifest import load_manifest
 from .model_forge import (
     DEFAULT_FORGE_ARTIFACTS_DIR,
     ForgePlanError,
+    _forge_output_mount_matches,
     forge_container_environment_errors,
     forge_plan_decision,
     inspect_physical_preflight,
@@ -202,6 +203,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return 2
             print_json(result)
             return 0
+        if not _forge_output_mount_matches(plan, args.output):
+            print_json(
+                {
+                    "status": "REFUSED",
+                    "qmf_admissible": False,
+                    "errors": ["Forge probe output is not the exact evidence mount"],
+                }
+            )
+            return 2
         result = inspect_physical_preflight(
             plan,
             accepted_plan_hash=args.accept_plan_hash,
