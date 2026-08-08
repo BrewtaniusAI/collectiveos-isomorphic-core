@@ -18,10 +18,13 @@ and an independently approved QMF plan exist.
 
 from __future__ import annotations
 
+import ctypes
+import errno
 import hashlib
 import json
 import math
 import os
+import platform
 import re
 import shutil
 import stat
@@ -76,6 +79,14 @@ SIMULATION_LIMITATIONS = [
     "resource observations are deterministic fixtures",
     "this receipt cannot satisfy a QMF model-training-run contract",
 ]
+CAPABILITY_STATUS_FIELDS = ("CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb")
+EMPTY_CAPABILITY_MASK = "0000000000000000"
+SECCOMP_KEYRING_SYSCALLS = {
+    "aarch64": (217, 218, 219),
+    "amd64": (248, 249, 250),
+    "arm64": (217, 218, 219),
+    "x86_64": (248, 249, 250),
+}
 
 TOP_LEVEL_KEYS = {
     "schema_version",
@@ -983,7 +994,7 @@ def simulate_forge_run(
     provenance = _verified_execution_source()
     if provenance is None:
         raise ForgePlanError("Forge simulation requires an attested isolated container source")
-    sandbox_errors = _forge_runtime_sandbox_errors(plan)
+    sandbox_errors = _forge_runtime_sandbox_errors(plan, artifacts_dir)
     if sandbox_errors:
         raise ForgePlanError("; ".join(sandbox_errors))
     source_commit, source_tree = provenance
@@ -1666,6 +1677,31 @@ def _output_path_process_writable(path: Path = Path("/forge/output")) -> bool:
         return False
 
 
+def _allowed_writable_mount(mount_path: PurePosixPath, filesystem_type: str) -> bool:
+    output = PurePosixPath("/forge/output")
+    if mount_path == output or output in mount_path.parents:
+        return True
+    expected_runtime_mounts = {
+        PurePosixPath("/tmp"): {"tmpfs"},
+        PurePosixPath("/dev"): {"tmpfs"},
+        PurePosixPath("/dev/pts"): {"devpts"},
+        PurePosixPath("/dev/mqueue"): {"mqueue"},
+        PurePosixPath("/dev/shm"): {"tmpfs"},
+        PurePosixPath("/proc"): {"proc"},
+        PurePosixPath("/proc/acpi"): {"tmpfs"},
+        PurePosixPath("/proc/interrupts"): {"tmpfs"},
+        PurePosixPath("/proc/kcore"): {"tmpfs"},
+        PurePosixPath("/proc/keys"): {"tmpfs"},
+        PurePosixPath("/proc/latency_stats"): {"tmpfs"},
+        PurePosixPath("/proc/scsi"): {"tmpfs"},
+        PurePosixPath("/proc/timer_list"): {"tmpfs"},
+        PurePosixPath("/etc/hostname"): {"ext4", "xfs"},
+        PurePosixPath("/etc/hosts"): {"ext4", "xfs"},
+        PurePosixPath("/etc/resolv.conf"): {"ext4", "xfs"},
+    }
+    return filesystem_type in expected_runtime_mounts.get(mount_path, set())
+
+
 def _forge_mount_policy() -> dict[str, bool]:
     targets = {
         "/forge/plan.json": "plan_read_only",
@@ -1676,6 +1712,7 @@ def _forge_mount_policy() -> dict[str, bool]:
     }
     result = {name: False for name in targets.values()}
     result["output_process_writable"] = False
+    result["no_unexpected_writable_mounts"] = True
     protected_input_paths = {
         PurePosixPath(target): observation
         for target, observation in targets.items()
@@ -1697,6 +1734,13 @@ def _forge_mount_policy() -> dict[str, bool]:
         mountpoint = fields[4].replace("\\040", " ")
         mount_path = PurePosixPath(mountpoint)
         options = set(fields[5].split(","))
+        filesystem_type = filesystem_fields[0]
+        if (
+            "rw" in options
+            and "ro" not in options
+            and not _allowed_writable_mount(mount_path, filesystem_type)
+        ):
+            result["no_unexpected_writable_mounts"] = False
         for protected_path, protected_observation in protected_input_paths.items():
             if (protected_path in mount_path.parents or mount_path in protected_path.parents) and (
                 "ro" not in options or "rw" in options
@@ -1708,7 +1752,7 @@ def _forge_mount_policy() -> dict[str, bool]:
         if observation == "output_writable":
             result[observation] = "rw" in options and "ro" not in options
         elif observation == "tmpfs_active":
-            result[observation] = filesystem_fields[0] == "tmpfs"
+            result[observation] = filesystem_type == "tmpfs"
         else:
             result[observation] = "ro" in options and "rw" not in options
     for observation in writable_protected_submounts:
@@ -1745,7 +1789,39 @@ def _cgroup_limits() -> dict[str, int | None]:
     }
 
 
-def _forge_runtime_sandbox_errors(plan: dict[str, Any]) -> tuple[str, ...]:
+def _linux_capability_sets_empty(status: dict[str, str]) -> bool:
+    return all(status.get(field) == EMPTY_CAPABILITY_MASK for field in CAPABILITY_STATUS_FIELDS)
+
+
+def _runtime_default_seccomp_denials_active() -> bool:
+    syscall_numbers = SECCOMP_KEYRING_SYSCALLS.get(platform.machine().lower())
+    if syscall_numbers is None:
+        return False
+    probes = (
+        (syscall_numbers[0], (0, 0, 0, 0, -1)),
+        (syscall_numbers[1], (0, 0, 0, -1)),
+        (syscall_numbers[2], (-1, 0, 0, 0, 0)),
+    )
+    try:
+        syscall = ctypes.CDLL(None, use_errno=True).syscall
+        syscall.restype = ctypes.c_long
+        for number, arguments in probes:
+            ctypes.set_errno(0)
+            result = syscall(
+                ctypes.c_long(number),
+                *(ctypes.c_long(argument) for argument in arguments),
+            )
+            if result != -1 or ctypes.get_errno() != errno.EPERM:
+                return False
+    except (AttributeError, OSError, TypeError, ValueError):
+        return False
+    return True
+
+
+def _forge_runtime_sandbox_errors(
+    plan: dict[str, Any],
+    artifacts_dir: Path,
+) -> tuple[str, ...]:
     """Observe the isolation properties required before emitting simulated evidence."""
 
     errors: list[str] = []
@@ -1754,18 +1830,33 @@ def _forge_runtime_sandbox_errors(plan: dict[str, Any]) -> tuple[str, ...]:
     effective_gid = os.getegid() if hasattr(os, "getegid") else None
     if (effective_uid, effective_gid) != (65532, 65532):
         errors.append("Forge sandbox is not running as UID/GID 65532")
-    if status.get("CapEff") != "0000000000000000":
-        errors.append("Forge sandbox effective Linux capabilities are not empty")
+    if not _linux_capability_sets_empty(status):
+        errors.append("Forge sandbox Linux capability sets are not empty")
     if status.get("NoNewPrivs") != "1":
         errors.append("Forge sandbox no-new-privileges is not active")
-    if status.get("Seccomp") != "2":
-        errors.append("Forge sandbox runtime-default seccomp filter is not active")
+    if status.get("Seccomp") != "2" or not _runtime_default_seccomp_denials_active():
+        errors.append("Forge sandbox required seccomp restrictions are not active")
     if not _root_is_read_only():
         errors.append("Forge sandbox root filesystem is not read-only")
     if _default_route_present():
         errors.append("Forge sandbox has a default network route")
     if _network_interfaces() != {"lo"}:
         errors.append("Forge sandbox exposes a non-loopback network interface")
+
+    sandbox = plan.get("sandbox")
+    expected_output = sandbox.get("output_mount") if isinstance(sandbox, dict) else None
+    try:
+        resolved_output = artifacts_dir.resolve()
+        resolved_expected_output = Path(expected_output).resolve()
+    except (OSError, RuntimeError, TypeError):
+        resolved_output = None
+        resolved_expected_output = None
+    if (
+        resolved_output is None
+        or resolved_expected_output is None
+        or resolved_output != resolved_expected_output
+    ):
+        errors.append("Forge simulation output is not the exact evidence mount")
 
     for observation, valid in _forge_mount_policy().items():
         if not valid:
@@ -1849,12 +1940,14 @@ def inspect_physical_preflight(
     effective_user_non_root = hasattr(os, "geteuid") and os.geteuid() != 0
     if not effective_user_non_root:
         errors.append("Forge physical preflight is not running as a non-root user")
-    if status.get("CapEff") != "0000000000000000":
-        errors.append("effective Linux capabilities are not empty")
+    capabilities_empty = _linux_capability_sets_empty(status)
+    if not capabilities_empty:
+        errors.append("Linux capability sets are not empty")
     if status.get("NoNewPrivs") != "1":
         errors.append("no-new-privileges is not active")
-    if status.get("Seccomp") != "2":
-        errors.append("the runtime-default seccomp filter is not active")
+    seccomp_filter = status.get("Seccomp") == "2" and _runtime_default_seccomp_denials_active()
+    if not seccomp_filter:
+        errors.append("the required seccomp restrictions are not active")
     root_read_only = _root_is_read_only()
     default_route_present = _default_route_present()
     network_interfaces = _network_interfaces()
@@ -2021,9 +2114,9 @@ def inspect_physical_preflight(
         "network_mode": "none",
         "sandbox_observation": {
             "effective_user_non_root": effective_user_non_root,
-            "capabilities_empty": status.get("CapEff") == "0000000000000000",
+            "capabilities_empty": capabilities_empty,
             "no_new_privileges": status.get("NoNewPrivs") == "1",
-            "seccomp_filter": status.get("Seccomp") == "2",
+            "seccomp_filter": seccomp_filter,
             "read_only_root": root_read_only,
             "default_route_present": default_route_present,
             "only_loopback_interface": only_loopback,

@@ -84,9 +84,11 @@ The Compose environment is hardened independently of the Python validator:
 - `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`, and `HF_DATASETS_OFFLINE=1`.
 
 Before a simulation can emit evidence, the pre-import entrypoint authenticates the proc, sysfs, and
-cgroup observation sources. The runtime then observes UID/GID 65532, empty capabilities,
-no-new-privileges, runtime-default seccomp, a read-only root, loopback-only networking, the exact
-Forge mount policy, unused and cgroup-disabled swap, a bounded memory cgroup, and at most 512 PIDs.
+cgroup observation sources. The runtime then observes UID/GID 65532, empty inheritable, permitted,
+effective, bounding, and ambient capability sets, no-new-privileges, seccomp filter mode plus the
+required keyring-syscall denials, a read-only root, loopback-only networking, the exact Forge mount
+policy with no unexpected writable mount, unused and cgroup-disabled swap, a bounded memory cgroup,
+the exact `/forge/output` evidence destination, and at most 512 PIDs.
 
 Docker Compose requires an image reference pinned by digest. It intentionally refuses an implicit
 floating base tag. The launcher also derives an exact lowercase source commit and tree (or accepts
@@ -168,11 +170,12 @@ sets `capabilities: [gpu]` and an explicit device ID. See
 2. The exact recomputed plan hash passed through `--accept-plan-hash`.
 3. `OIMS_FORGE_ENABLE_PROBE=1` inside the locked Compose profile.
 4. An immutable base-image digest plus offline Hugging Face environment flags.
-5. Non-root execution, empty Linux capabilities, no-new-privileges, and an active default seccomp
-   filter.
+5. Non-root execution, empty inheritable/permitted/effective/bounding/ambient Linux capability sets,
+   no-new-privileges, seccomp filter mode, and the required keyring-syscall denials.
 6. A read-only root, read-only plan/base/dataset mounts, a writable evidence mount, a successful
    process-level create/write/fsync/delete probe as UID 65532, no writable ancestor or descendant
-   mount covering either protected input, and tmpfs at `/tmp`.
+   mount covering either protected input, no unexpected writable mount outside the evidence/runtime
+   allowlist, and tmpfs at `/tmp`.
 7. No default route, no interface other than loopback, and no swap use.
 8. Current cgroup usage subtracted from the cgroup RAM limit must leave the full plan ceiling;
    cgroup swap is zero and the PID limit is no greater than 512.

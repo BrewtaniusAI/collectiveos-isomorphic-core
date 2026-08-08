@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ctypes
+import errno
 import hashlib
 import json
 import os
@@ -23,6 +25,8 @@ from oims.model_forge import (
     _forge_mount_policy,
     _forge_runtime_sandbox_errors,
     _installed_package_digest,
+    _linux_capability_sets_empty,
+    _runtime_default_seccomp_denials_active,
     _verified_execution_source,
     compute_plan_hash,
     forge_container_environment_errors,
@@ -43,12 +47,35 @@ TEST_VERIFIED_SOURCE = ("a" * 40, "b" * 40)
 TEST_NVIDIA_SMI_PATH = "/usr/bin/nvidia-smi"
 
 
+def sandbox_status(**overrides: str) -> dict[str, str]:
+    status = {
+        "CapInh": "0000000000000000",
+        "CapPrm": "0000000000000000",
+        "CapEff": "0000000000000000",
+        "CapBnd": "0000000000000000",
+        "CapAmb": "0000000000000000",
+        "NoNewPrivs": "1",
+        "Seccomp": "2",
+    }
+    status.update(overrides)
+    return status
+
+
 @pytest.fixture(autouse=True)
 def attested_source_for_forge_exercises(
     monkeypatch: pytest.MonkeyPatch,
     request: pytest.FixtureRequest,
 ) -> None:
-    monkeypatch.setattr(model_forge_module, "_forge_runtime_sandbox_errors", lambda plan: ())
+    monkeypatch.setattr(
+        model_forge_module,
+        "_forge_runtime_sandbox_errors",
+        lambda plan, artifacts_dir: (),
+    )
+    monkeypatch.setattr(
+        model_forge_module,
+        "_runtime_default_seccomp_denials_active",
+        lambda: True,
+    )
     if request.node.get_closest_marker("direct_source"):
         return
     original = model_forge_module._verified_execution_source
@@ -247,55 +274,96 @@ def test_simulation_emits_verifiable_non_model_evidence(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("status", "effective_uid", "root_read_only", "default_route", "interfaces", "error"),
+    (
+        "status",
+        "effective_uid",
+        "root_read_only",
+        "default_route",
+        "interfaces",
+        "seccomp_denials",
+        "artifacts_dir",
+        "error",
+    ),
     [
         (
-            {"CapEff": "0000000000000001", "NoNewPrivs": "1", "Seccomp": "2"},
+            sandbox_status(CapPrm="0000000000000001"),
             65532,
             True,
             False,
             {"lo"},
-            "capabilities are not empty",
+            True,
+            Path("/forge/output"),
+            "capability sets are not empty",
         ),
         (
-            {"CapEff": "0000000000000000", "NoNewPrivs": "0", "Seccomp": "2"},
+            sandbox_status(NoNewPrivs="0"),
             65532,
             True,
             False,
             {"lo"},
+            True,
+            Path("/forge/output"),
             "no-new-privileges is not active",
         ),
         (
-            {"CapEff": "0000000000000000", "NoNewPrivs": "1", "Seccomp": "0"},
+            sandbox_status(Seccomp="0"),
             65532,
             True,
             False,
             {"lo"},
-            "seccomp filter is not active",
+            True,
+            Path("/forge/output"),
+            "required seccomp restrictions are not active",
         ),
         (
-            {"CapEff": "0000000000000000", "NoNewPrivs": "1", "Seccomp": "2"},
+            sandbox_status(),
+            65532,
+            True,
+            False,
+            {"lo"},
+            False,
+            Path("/forge/output"),
+            "required seccomp restrictions are not active",
+        ),
+        (
+            sandbox_status(),
             0,
             True,
             False,
             {"lo"},
+            True,
+            Path("/forge/output"),
             "UID/GID 65532",
         ),
         (
-            {"CapEff": "0000000000000000", "NoNewPrivs": "1", "Seccomp": "2"},
+            sandbox_status(),
             65532,
             False,
             False,
             {"lo"},
+            True,
+            Path("/forge/output"),
             "root filesystem is not read-only",
         ),
         (
-            {"CapEff": "0000000000000000", "NoNewPrivs": "1", "Seccomp": "2"},
+            sandbox_status(),
             65532,
             True,
             True,
             {"lo", "eth0"},
+            True,
+            Path("/forge/output"),
             "default network route",
+        ),
+        (
+            sandbox_status(),
+            65532,
+            True,
+            False,
+            {"lo"},
+            True,
+            Path("/home/evidence"),
+            "output is not the exact evidence mount",
         ),
     ],
 )
@@ -305,6 +373,8 @@ def test_simulation_sandbox_observes_runtime_isolation(
     root_read_only: bool,
     default_route: bool,
     interfaces: set[str],
+    seccomp_denials: bool,
+    artifacts_dir: Path,
     error: str,
 ) -> None:
     with (
@@ -314,6 +384,10 @@ def test_simulation_sandbox_observes_runtime_isolation(
         patch("oims.model_forge._root_is_read_only", return_value=root_read_only),
         patch("oims.model_forge._default_route_present", return_value=default_route),
         patch("oims.model_forge._network_interfaces", return_value=interfaces),
+        patch(
+            "oims.model_forge._runtime_default_seccomp_denials_active",
+            return_value=seccomp_denials,
+        ),
         patch(
             "oims.model_forge._forge_mount_policy",
             return_value={"all_required_mounts": True},
@@ -332,9 +406,41 @@ def test_simulation_sandbox_observes_runtime_isolation(
             },
         ),
     ):
-        errors = _forge_runtime_sandbox_errors(load_example())
+        errors = _forge_runtime_sandbox_errors(load_example(), artifacts_dir)
 
     assert any(error in observed for observed in errors)
+
+
+@pytest.mark.parametrize("field", model_forge_module.CAPABILITY_STATUS_FIELDS)
+def test_every_linux_capability_set_must_be_empty(field: str) -> None:
+    status = sandbox_status()
+    assert _linux_capability_sets_empty(status)
+    status[field] = "0000000000000001"
+    assert not _linux_capability_sets_empty(status)
+
+
+@pytest.mark.parametrize(
+    ("observed_errno", "expected"), [(errno.EPERM, True), (errno.EINVAL, False)]
+)
+def test_seccomp_denial_probe_requires_blocked_keyring_syscalls(
+    observed_errno: int,
+    expected: bool,
+) -> None:
+    class FakeSyscall:
+        restype: object = None
+
+        def __call__(self, *_arguments: object) -> int:
+            ctypes.set_errno(observed_errno)
+            return -1
+
+    class FakeLibc:
+        syscall = FakeSyscall()
+
+    with (
+        patch("oims.model_forge.platform.machine", return_value="x86_64"),
+        patch("oims.model_forge.ctypes.CDLL", return_value=FakeLibc()),
+    ):
+        assert _runtime_default_seccomp_denials_active() is expected
 
 
 def test_simulation_refuses_unproven_runtime_isolation_before_writing(tmp_path: Path) -> None:
@@ -783,11 +889,7 @@ def test_probe_can_prove_a_locked_4090_sandbox_without_training(
     with (
         patch(
             "oims.model_forge._proc_status",
-            return_value={
-                "CapEff": "0000000000000000",
-                "NoNewPrivs": "1",
-                "Seccomp": "2",
-            },
+            return_value=sandbox_status(),
         ),
         patch(
             "oims.model_forge._memory_info",
@@ -1160,7 +1262,7 @@ def test_probe_requires_current_memory_headroom(
     with (
         patch(
             "oims.model_forge._proc_status",
-            return_value={"CapEff": "0000000000000000", "NoNewPrivs": "1", "Seccomp": "2"},
+            return_value=sandbox_status(),
         ),
         patch(
             "oims.model_forge._memory_info",
@@ -1217,7 +1319,7 @@ def test_probe_requires_process_level_output_write() -> None:
     with (
         patch(
             "oims.model_forge._proc_status",
-            return_value={"CapEff": "0000000000000000", "NoNewPrivs": "1", "Seccomp": "2"},
+            return_value=sandbox_status(),
         ),
         patch(
             "oims.model_forge._memory_info",
@@ -1316,6 +1418,24 @@ def test_probe_mount_policy_rejects_writable_protected_input_ancestor() -> None:
 
     assert policy["base_model_read_only"] is False
     assert policy["dataset_read_only"] is False
+
+
+def test_forge_mount_policy_rejects_writable_mount_outside_evidence_directory() -> None:
+    mountinfo = (
+        "1 0 0:1 / /forge/plan.json ro - ext4 /dev/root ro\n"
+        "2 0 0:2 / /forge/inputs/base ro - ext4 /dev/root ro\n"
+        "3 0 0:3 / /forge/inputs/dataset ro - ext4 /dev/root ro\n"
+        "4 0 0:4 / /forge/output rw - ext4 /dev/root rw\n"
+        "5 0 0:5 / /tmp rw - tmpfs tmpfs rw\n"
+        "6 0 0:6 / /home/evidence rw - ext4 /dev/root rw"
+    )
+    with (
+        patch("oims.model_forge.Path.read_text", return_value=mountinfo),
+        patch("oims.model_forge._output_path_process_writable", return_value=True),
+    ):
+        policy = _forge_mount_policy()
+
+    assert policy["no_unexpected_writable_mounts"] is False
 
 
 def test_probe_cli_turns_receipt_write_failure_into_a_refusal(
