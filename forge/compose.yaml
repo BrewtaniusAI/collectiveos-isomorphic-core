@@ -9,6 +9,12 @@ x-forge-common: &forge-common
       FORGE_SOURCE_COMMIT: ${FORGE_SOURCE_COMMIT:?set FORGE_SOURCE_COMMIT to the exact source commit}
       FORGE_SOURCE_TREE: ${FORGE_SOURCE_TREE:?set FORGE_SOURCE_TREE to the exact source tree}
   image: collective-model-forge:${FORGE_IMAGE_TAG:-local}
+  entrypoint:
+    - python
+    - -I
+    - -S
+    - /usr/local/libexec/oims-forge-entrypoint.py
+  user: "65532:65532"
   network_mode: none
   read_only: true
   cap_drop:

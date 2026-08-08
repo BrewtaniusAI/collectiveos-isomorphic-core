@@ -59,9 +59,18 @@ python -m oims forge validate `
 
 Direct working-tree execution is intentionally limited to plan validation. Simulation and receipt
 verification refuse outside the isolated launcher-built container because already-imported project
-code cannot safely attest its own source. The container's external pre-import verifier must establish
-the installed package, commit, tree, interpreter, dependency, and mount boundaries before either
-operation can emit or accept evidence. Use the launcher flow below for simulation and verification.
+code cannot safely attest its own source. Before container creation, the trusted launcher validates
+the normalized Compose process, entrypoint, non-root user, build context, and exact four-mount
+policy. The container's external pre-import verifier then establishes the installed package,
+commit, tree, interpreter, dependency, and in-namespace mount boundaries before either operation
+can emit or accept evidence. Use the launcher flow below for simulation and verification.
+
+The trusted launcher, Docker CLI/daemon, and NVIDIA runtime are part of this evidence boundary. A
+raw OCI invocation, an entrypoint or volume override, or an actor able to replace the daemon,
+runtime, root filesystem, or first executable is outside the Forge evidence contract; output from
+such a run is not accepted as governed Forge evidence. This boundary is explicit because no process
+inside a mount namespace can authenticate code that an OCI administrator replaced before the
+kernel started that process.
 
 The simulation writes no `adapter_config.json` or `adapter_model.safetensors`. Its candidate is
 named `synthetic-candidate.json` and contains explicit `not_a_model`, `not_a_peft_adapter`, and
@@ -162,7 +171,9 @@ child receives only a fixed C-locale environment, so inherited dynamic-loader ov
 redirect it to code beneath an admitted input mount.
 An NVIDIA file already mapped before verification, a writable or non-regular file, an entire
 runtime-root mount, or any non-NVIDIA executable-runtime mount still fails closed. Compose refuses
-a working-tree context. This keeps source and runtime evidence bound to the exact inspected bytes.
+a working-tree context, and the launcher rejects any resolved service, entrypoint, user, build
+context, sandbox setting, or bind mount outside the checked-in four-mount policy before starting
+Python. This keeps source and runtime evidence bound to the exact inspected bytes.
 
 Docker documents GPU reservations through `deploy.resources.reservations.devices`; the Forge
 sets `capabilities: [gpu]` and an explicit device ID. See

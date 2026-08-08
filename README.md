@@ -108,8 +108,10 @@ python -m oims forge validate \
 ```
 
 Direct working-tree execution is validation-only. Simulation, physical probing, and receipt
-verification require the isolated launcher-built container so provenance is checked before any
-project code is imported. See `MODEL_FORGE.md` for the WSL2/Docker/RTX 4090 flow and the exact
+verification require the isolated launcher-built container. The trusted launcher validates the
+resolved entrypoint and exact bind-mount policy before container creation; the container then
+checks provenance before importing project code. Raw or overridden OCI invocations are outside the
+Forge evidence contract. See `MODEL_FORGE.md` for the WSL2/Docker/RTX 4090 flow and the exact
 promotion boundary.
 
 ## Download and run the whole family

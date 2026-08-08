@@ -2242,6 +2242,13 @@ def test_oci_boundary_is_offline_unprivileged_and_non_training() -> None:
     compose = yaml.safe_load((ROOT / "forge" / "compose.yaml").read_text(encoding="utf-8"))
     for service_name in ("simulate", "verify", "probe"):
         service = compose["services"][service_name]
+        assert service["entrypoint"] == [
+            "python",
+            "-I",
+            "-S",
+            "/usr/local/libexec/oims-forge-entrypoint.py",
+        ]
+        assert service["user"] == "65532:65532"
         assert service["network_mode"] == "none"
         assert service["read_only"] is True
         assert service["cap_drop"] == ["ALL"]
@@ -2299,6 +2306,8 @@ def test_oci_boundary_is_offline_unprivileged_and_non_training() -> None:
     assert "protected executable runtime contains an unexpected mount" in entrypoint
     assert "sys.flags.no_site" in entrypoint
     assert "nvidia-runtime.approved" in containerfile
+    for variable in ("LD_LIBRARY_PATH", "LD_PRELOAD", "LD_AUDIT", "GLIBC_TUNABLES"):
+        assert f"{variable}= \\" in containerfile
     launcher = (ROOT / "scripts" / "run_model_forge.ps1").read_text(encoding="utf-8")
     assert "status --porcelain=v1 --untracked-files=all" in launcher
     assert "ls-files -v" in launcher
@@ -2313,6 +2322,29 @@ def test_oci_boundary_is_offline_unprivileged_and_non_training() -> None:
     assert "SourceCommit does not match the repository HEAD" in launcher
     assert "$env:FORGE_SOURCE_TREE = $SourceTree" in launcher
     assert "'Validate', 'Simulate', 'Verify', 'Probe'" in launcher
+
+
+def test_launcher_enforces_process_and_mount_policy_before_container_start() -> None:
+    launcher = (ROOT / "scripts" / "run_model_forge.ps1").read_text(encoding="utf-8")
+
+    assert "config --format json" in launcher
+    assert "$ExpectedEntrypoint" in launcher
+    assert "has an unexpected entrypoint" in launcher
+    assert "has an unexpected command" in launcher
+    assert "has an unexpected environment variable" in launcher
+    assert "has an unexpected environment value" in launcher
+    assert "has an unexpected mount count" in launcher
+    assert "has an unexpected bind mount target" in launcher
+    assert "has an unexpected bind mount source or mode" in launcher
+    for target in (
+        "/forge/plan.json",
+        "/forge/output",
+        "/forge/inputs/base",
+        "/forge/inputs/dataset",
+    ):
+        assert f"'{target}'" in launcher
+    assert launcher.index("config --format json") < launcher.index("switch ($Mode)")
+    assert launcher.index("switch ($Mode)") < launcher.index("run --rm --build")
     assert "Verify requires -Receipt" in launcher
     assert "Verify requires Receipt to remain beneath OutputDir" in launcher
     assert "$env:FORGE_RECEIPT = $ContainerReceipt" in launcher

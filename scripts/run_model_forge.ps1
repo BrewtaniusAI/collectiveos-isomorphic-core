@@ -195,10 +195,139 @@ try {
     }
     $env:FORGE_GPU_DEVICE_ID = [string]$GpuDeviceId
     $env:FORGE_MEMORY_LIMIT = $MemoryLimit
+    if ($Mode -eq 'Probe') {
+        if ($AcceptPlanHash -notmatch '^sha256:[0-9a-f]{64}$') {
+            throw 'Probe requires the exact validated plan hash in -AcceptPlanHash.'
+        }
+        $env:FORGE_ACCEPT_PLAN_HASH = $AcceptPlanHash
+    }
 
-    & docker compose -f $ComposePath config --quiet
-    if ($LASTEXITCODE -ne 0) {
+    $ComposeOutput = @(
+        & docker compose -f $ComposePath --profile probe config --format json
+    )
+    if ($LASTEXITCODE -ne 0 -or $ComposeOutput.Count -eq 0) {
         throw "Model Forge Compose validation failed with exit code $LASTEXITCODE."
+    }
+    $ResolvedCompose = ($ComposeOutput -join [Environment]::NewLine) | ConvertFrom-Json
+    $ExpectedServices = @('simulate', 'verify', 'probe')
+    $ObservedServices = @($ResolvedCompose.services.PSObject.Properties.Name)
+    if (@(Compare-Object $ExpectedServices $ObservedServices).Count -ne 0) {
+        throw 'Model Forge Compose policy contains an unexpected service.'
+    }
+    $ExpectedEntrypoint = @(
+        'python',
+        '-I',
+        '-S',
+        '/usr/local/libexec/oims-forge-entrypoint.py'
+    )
+    $ExpectedReceipt = '/forge/output/receipt.json'
+    if ($ContainerReceipt) {
+        $ExpectedReceipt = $ContainerReceipt
+    }
+    $ExpectedAcceptPlanHash = 'unset'
+    if ($Mode -eq 'Probe') {
+        $ExpectedAcceptPlanHash = $AcceptPlanHash
+    }
+    $ExpectedCommands = @{
+        'simulate' = @('forge', 'simulate', '--plan', '/forge/plan.json', '--output', '/forge/output')
+        'verify' = @('forge', 'verify', '--receipt', $ExpectedReceipt)
+        'probe' = @(
+            'forge',
+            'probe',
+            '--plan',
+            '/forge/plan.json',
+            '--output',
+            '/forge/output',
+            '--accept-plan-hash',
+            $ExpectedAcceptPlanHash
+        )
+    }
+    $ExpectedMounts = @{
+        '/forge/plan.json' = @{
+            Source = $PlanPath
+            ReadOnly = $true
+        }
+        '/forge/output' = @{
+            Source = (Resolve-Path -LiteralPath $OutputDir).Path
+            ReadOnly = $false
+        }
+        '/forge/inputs/base' = @{
+            Source = (Resolve-Path -LiteralPath $BaseModelDir).Path
+            ReadOnly = $true
+        }
+        '/forge/inputs/dataset' = @{
+            Source = (Resolve-Path -LiteralPath $DatasetDir).Path
+            ReadOnly = $true
+        }
+    }
+    foreach ($ServiceName in $ExpectedServices) {
+        $Service = $ResolvedCompose.services.$ServiceName
+        if (
+            [string]$Service.build.context -ne $BuildContext -or
+            [string]$Service.build.dockerfile -ne 'forge/Containerfile' -or
+            [string]$Service.user -ne '65532:65532' -or
+            [string]$Service.network_mode -ne 'none' -or
+            -not [bool]$Service.read_only -or
+            (@($Service.cap_drop) -join ',') -ne 'ALL' -or
+            @($Service.security_opt) -notcontains 'no-new-privileges:true'
+        ) {
+            throw "Model Forge Compose service $ServiceName violates the pre-start sandbox policy."
+        }
+        if ((@($Service.entrypoint) -join "`0") -ne ($ExpectedEntrypoint -join "`0")) {
+            throw "Model Forge Compose service $ServiceName has an unexpected entrypoint."
+        }
+        if ((@($Service.command) -join "`0") -ne (@($ExpectedCommands[$ServiceName]) -join "`0")) {
+            throw "Model Forge Compose service $ServiceName has an unexpected command."
+        }
+        $ExpectedEnvironment = @{
+            'HF_HUB_OFFLINE' = '1'
+            'TRANSFORMERS_OFFLINE' = '1'
+            'HF_DATASETS_OFFLINE' = '1'
+            'OIMS_FORGE_CONTAINER' = '1'
+            'OIMS_FORGE_BASE_IMAGE' = $BaseImage
+            'OIMS_FORGE_SOURCE_COMMIT' = $SourceCommit
+            'OIMS_FORGE_SOURCE_TREE' = $SourceTree
+        }
+        if ($ServiceName -eq 'probe') {
+            $ExpectedEnvironment['OIMS_FORGE_ENABLE_PROBE'] = '1'
+        }
+        $ObservedEnvironmentNames = @($Service.environment.PSObject.Properties.Name)
+        if (@(Compare-Object @($ExpectedEnvironment.Keys) $ObservedEnvironmentNames).Count -ne 0) {
+            throw "Model Forge Compose service $ServiceName has an unexpected environment variable."
+        }
+        foreach ($Name in $ExpectedEnvironment.Keys) {
+            if ([string]$Service.environment.$Name -ne [string]$ExpectedEnvironment[$Name]) {
+                throw "Model Forge Compose service $ServiceName has an unexpected environment value."
+            }
+        }
+        $ObservedMounts = @($Service.volumes)
+        if ($ObservedMounts.Count -ne $ExpectedMounts.Count) {
+            throw "Model Forge Compose service $ServiceName has an unexpected mount count."
+        }
+        $SeenTargets = @{}
+        foreach ($Volume in $ObservedMounts) {
+            $Target = [string]$Volume.target
+            if (
+                [string]$Volume.type -ne 'bind' -or
+                -not $ExpectedMounts.ContainsKey($Target) -or
+                $SeenTargets.ContainsKey($Target)
+            ) {
+                throw "Model Forge Compose service $ServiceName has an unexpected bind mount target."
+            }
+            $SeenTargets[$Target] = $true
+            $ExpectedMount = $ExpectedMounts[$Target]
+            $ObservedReadOnly = $false
+            $ReadOnlyProperty = $Volume.PSObject.Properties['read_only']
+            if ($null -ne $ReadOnlyProperty) {
+                $ObservedReadOnly = [bool]$ReadOnlyProperty.Value
+            }
+            if (
+                [string]$Volume.source -ne [string]$ExpectedMount.Source -or
+                $ObservedReadOnly -ne [bool]$ExpectedMount.ReadOnly
+            ) {
+                throw "Model Forge Compose service $ServiceName has an unexpected bind mount source or mode."
+            }
+        }
     }
 
     switch ($Mode) {
@@ -213,10 +342,6 @@ try {
             & docker compose -f $ComposePath run --rm --build verify
         }
         'Probe' {
-            if ($AcceptPlanHash -notmatch '^sha256:[0-9a-f]{64}$') {
-                throw 'Probe requires the exact validated plan hash in -AcceptPlanHash.'
-            }
-            $env:FORGE_ACCEPT_PLAN_HASH = $AcceptPlanHash
             & docker compose -f $ComposePath --profile probe run --rm --build probe
         }
     }
