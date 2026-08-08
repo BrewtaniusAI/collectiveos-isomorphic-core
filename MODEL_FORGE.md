@@ -184,8 +184,11 @@ launcher records OS filesystem identities and descriptor-bound canonical paths f
 three host directories, then re-resolves and rechecks both those snapshots after the image build.
 Output/input disjointness is recomputed from the current canonical paths immediately before
 execution, so moving an identity-preserving object behind a symlink or junction fails closed. It
-then executes that exact rendered snapshot from memory rather than reparsing the mutable Compose
-path. This keeps source and runtime evidence bound to the exact inspected host objects and bytes.
+then rebinds every Linux mount source to the held launcher's `/proc/<pid>/fd/<fd>` object; on
+Windows, non-delete-sharing filesystem handles retain the verified names until Compose returns.
+Those leases close the final check-to-bind race. The launcher executes that exact rendered snapshot
+from memory rather than reparsing the mutable Compose path. This keeps source and runtime evidence
+bound to the exact inspected host objects and bytes.
 
 Docker documents GPU reservations through `deploy.resources.reservations.devices`; the Forge
 sets `capabilities: [gpu]` and an explicit device ID. See

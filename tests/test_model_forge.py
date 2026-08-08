@@ -2376,18 +2376,25 @@ def test_launcher_binds_case_sensitive_mount_paths_and_revalidates_identity() ->
     assert "GetFinalPathNameByHandle" in launcher
     assert 'EntryPoint = "statx"' in launcher
     assert '"/proc/self/fd/" + fileDescriptor' in launcher
+    assert '"/proc/{0}/fd/{1}"' in launcher
+    assert "FileShareRead | FileShareWrite," in launcher
+    assert "FileShareDelete" not in launcher
     assert "function Assert-ForgeHostMountIdentity" in launcher
     assert "$CurrentPath -cne $ExpectedPath" in launcher
     assert "$CurrentSnapshot.CanonicalPath -cne" in launcher
     assert "-Left $CurrentCanonicalPaths['Output']" in launcher
+    assert "$BoundPaths[$Name] = [string]$ExpectedSnapshot.BoundPath" in launcher
+    assert "$Volume.source = $BoundMountSources[[string]$Volume.target]" in launcher
+    assert "foreach ($Snapshot in $ExpectedHostSnapshots.Values)" in launcher
     assert "$Volume.source -cne" in launcher
     assert "$ExpectedMountTargets -ccontains $Target" in launcher
     assert "Compare-Object $ExpectedServices $ObservedServices -CaseSensitive" in launcher
     first_identity = launcher.index("$ExpectedHostSnapshots[$Name] = Get-ForgePathSnapshot")
     build = launcher.index("$ForgeImageId = Invoke-ForgeImageBuild `")
     revalidation = launcher.index("Assert-ForgeHostMountIdentity `", build)
+    rebinding = launcher.index("$Volume.source = $BoundMountSources", revalidation)
     execution = launcher.index("switch ($Mode)", revalidation)
-    assert first_identity < build < revalidation < execution
+    assert first_identity < build < revalidation < rebinding < execution
 
 
 def test_launcher_executes_validated_snapshot_without_ambient_mode_inputs() -> None:

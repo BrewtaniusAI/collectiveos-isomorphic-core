@@ -68,15 +68,55 @@ using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
 
-public sealed class OimsForgePathSnapshot
+public sealed class OimsForgePathSnapshot : IDisposable
 {
     public string Identity { get; private set; }
     public string CanonicalPath { get; private set; }
+    public string BoundPath { get; private set; }
+    private SafeFileHandle WindowsHandle;
+    private int LinuxDescriptor = -1;
 
-    public OimsForgePathSnapshot(string identity, string canonicalPath)
+    internal OimsForgePathSnapshot(
+        string identity,
+        string canonicalPath,
+        string boundPath,
+        SafeFileHandle windowsHandle)
     {
         Identity = identity;
         CanonicalPath = canonicalPath;
+        BoundPath = boundPath;
+        WindowsHandle = windowsHandle;
+    }
+
+    internal OimsForgePathSnapshot(
+        string identity,
+        string canonicalPath,
+        string boundPath,
+        int linuxDescriptor)
+    {
+        Identity = identity;
+        CanonicalPath = canonicalPath;
+        BoundPath = boundPath;
+        LinuxDescriptor = linuxDescriptor;
+    }
+
+    [DllImport("libc", EntryPoint = "close", SetLastError = true)]
+    private static extern int LinuxClose(int fileDescriptor);
+
+    public void Dispose()
+    {
+        if (WindowsHandle != null)
+        {
+            WindowsHandle.Dispose();
+            WindowsHandle = null;
+        }
+        if (LinuxDescriptor >= 0)
+        {
+            int descriptor = LinuxDescriptor;
+            LinuxDescriptor = -1;
+            if (LinuxClose(descriptor) != 0)
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
     }
 }
 
@@ -84,7 +124,6 @@ public static class OimsForgePathIdentity
 {
     private const uint FileShareRead = 0x00000001;
     private const uint FileShareWrite = 0x00000002;
-    private const uint FileShareDelete = 0x00000004;
     private const uint OpenExisting = 3;
     private const uint FileFlagBackupSemantics = 0x02000000;
     private const int LinuxOpenPath = 0x00200000;
@@ -152,9 +191,6 @@ public static class OimsForgePathIdentity
     [DllImport("libc", EntryPoint = "readlink", SetLastError = true)]
     private static extern IntPtr LinuxReadLink(string path, byte[] buffer, UIntPtr bufferSize);
 
-    [DllImport("libc", EntryPoint = "close", SetLastError = true)]
-    private static extern int LinuxClose(int fileDescriptor);
-
     [DllImport("libc", EntryPoint = "statx", SetLastError = true)]
     private static extern int Statx(
         int directoryFileDescriptor,
@@ -168,17 +204,21 @@ public static class OimsForgePathIdentity
     {
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
-            using (SafeFileHandle handle = CreateFile(
+            SafeFileHandle handle = CreateFile(
                 path,
                 0,
-                FileShareRead | FileShareWrite | FileShareDelete,
+                FileShareRead | FileShareWrite,
                 IntPtr.Zero,
                 OpenExisting,
                 FileFlagBackupSemantics,
-                IntPtr.Zero))
+                IntPtr.Zero);
+            if (handle.IsInvalid)
             {
-                if (handle.IsInvalid)
-                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                handle.Dispose();
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+            try
+            {
                 ByHandleFileInformation information;
                 if (!GetFileInformationByHandle(handle, out information))
                     throw new Win32Exception(Marshal.GetLastWin32Error());
@@ -197,7 +237,17 @@ public static class OimsForgePathIdentity
                     information.VolumeSerialNumber,
                     index
                 );
-                return new OimsForgePathSnapshot(identity, canonicalPath.ToString());
+                return new OimsForgePathSnapshot(
+                    identity,
+                    canonicalPath.ToString(),
+                    path,
+                    handle
+                );
+            }
+            catch
+            {
+                handle.Dispose();
+                throw;
             }
         }
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
@@ -240,12 +290,22 @@ public static class OimsForgePathIdentity
                     buffer.Inode,
                     buffer.MountId
                 );
-                return new OimsForgePathSnapshot(identity, canonicalPath);
+                string boundPath = String.Format(
+                    "/proc/{0}/fd/{1}",
+                    Environment.ProcessId,
+                    fileDescriptor
+                );
+                return new OimsForgePathSnapshot(
+                    identity,
+                    canonicalPath,
+                    boundPath,
+                    fileDescriptor
+                );
             }
-            finally
+            catch
             {
-                if (LinuxClose(fileDescriptor) != 0)
-                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                new OimsForgePathSnapshot("", "", "", fileDescriptor).Dispose();
+                throw;
             }
         }
         throw new PlatformNotSupportedException("Model Forge host identity requires Windows or Linux.");
@@ -263,19 +323,29 @@ function Assert-ForgeHostMountIdentity {
     )
 
     $CurrentCanonicalPaths = @{}
+    $BoundPaths = @{}
     foreach ($Name in $ExpectedPaths.Keys) {
         $ExpectedPath = [string]$ExpectedPaths[$Name]
         $ExpectedSnapshot = $ExpectedSnapshots[$Name]
         $CurrentPath = (Resolve-Path -LiteralPath $ExpectedPath).Path
-        $CurrentSnapshot = Get-ForgePathSnapshot $CurrentPath
-        if (
-            $CurrentPath -cne $ExpectedPath -or
-            [string]$CurrentSnapshot.Identity -cne [string]$ExpectedSnapshot.Identity -or
-            [string]$CurrentSnapshot.CanonicalPath -cne [string]$ExpectedSnapshot.CanonicalPath
-        ) {
-            throw "Model Forge host mount identity changed before container launch: $Name"
+        $CurrentSnapshot = $null
+        try {
+            $CurrentSnapshot = Get-ForgePathSnapshot $CurrentPath
+            if (
+                $CurrentPath -cne $ExpectedPath -or
+                [string]$CurrentSnapshot.Identity -cne [string]$ExpectedSnapshot.Identity -or
+                [string]$CurrentSnapshot.CanonicalPath -cne [string]$ExpectedSnapshot.CanonicalPath
+            ) {
+                throw "Model Forge host mount identity changed before container launch: $Name"
+            }
+            $CurrentCanonicalPaths[$Name] = [string]$CurrentSnapshot.CanonicalPath
+            $BoundPaths[$Name] = [string]$ExpectedSnapshot.BoundPath
         }
-        $CurrentCanonicalPaths[$Name] = [string]$CurrentSnapshot.CanonicalPath
+        finally {
+            if ($null -ne $CurrentSnapshot) {
+                $CurrentSnapshot.Dispose()
+            }
+        }
     }
     foreach ($ProtectedName in @('Plan', 'BaseModel', 'Dataset')) {
         if (
@@ -286,6 +356,7 @@ function Assert-ForgeHostMountIdentity {
             throw 'OutputDir must remain disjoint from Plan, BaseModelDir, and DatasetDir.'
         }
     }
+    return $BoundPaths
 }
 
 function ConvertTo-ForgeByteCount {
@@ -843,10 +914,21 @@ try {
     foreach ($ServiceName in $ExpectedServices) {
         $ResolvedCompose.services.$ServiceName.image = $ForgeImageId
     }
-    $ExecutionCompose = $ResolvedCompose | ConvertTo-Json -Depth 100 -Compress
-    Assert-ForgeHostMountIdentity `
+    $BoundHostPaths = Assert-ForgeHostMountIdentity `
         -ExpectedPaths $ExpectedHostPaths `
         -ExpectedSnapshots $ExpectedHostSnapshots
+    $BoundMountSources = @{
+        '/forge/plan.json' = $BoundHostPaths['Plan']
+        '/forge/output' = $BoundHostPaths['Output']
+        '/forge/inputs/base' = $BoundHostPaths['BaseModel']
+        '/forge/inputs/dataset' = $BoundHostPaths['Dataset']
+    }
+    foreach ($ServiceName in $ExpectedServices) {
+        foreach ($Volume in @($ResolvedCompose.services.$ServiceName.volumes)) {
+            $Volume.source = $BoundMountSources[[string]$Volume.target]
+        }
+    }
+    $ExecutionCompose = $ResolvedCompose | ConvertTo-Json -Depth 100 -Compress
 
     switch ($Mode) {
         'Validate' {
@@ -870,5 +952,8 @@ try {
 finally {
     foreach ($Name in $EnvironmentNames) {
         [Environment]::SetEnvironmentVariable($Name, $OriginalEnvironment[$Name], 'Process')
+    }
+    foreach ($Snapshot in $ExpectedHostSnapshots.Values) {
+        $Snapshot.Dispose()
     }
 }
