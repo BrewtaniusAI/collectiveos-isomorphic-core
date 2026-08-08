@@ -67,8 +67,10 @@ python -m oims forge simulate `
 
 The direct simulation path requires either a launcher-built image with a matching read-only source
 commit/tree attestation or a clean Git working tree whose commit and tree can both be resolved. It
-refuses before creating the run directory when executed from dirty or unprovable source, preventing
-receipts from attributing modified code to a clean `HEAD`.
+also verifies every ignored `oims` bytecode cache compiles exactly from its corresponding source and
+refuses non-source, malformed, or modified executable caches. It refuses before creating the run
+directory when executed from dirty or unprovable source, preventing receipts from attributing
+modified code to a clean `HEAD`.
 
 Verify the returned receipt and every linked telemetry/checkpoint/candidate artifact:
 

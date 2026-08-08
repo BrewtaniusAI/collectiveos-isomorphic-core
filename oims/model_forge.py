@@ -19,7 +19,9 @@ and an independently approved QMF plan exist.
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
+import marshal
 import math
 import os
 import re
@@ -29,6 +31,7 @@ import sys
 import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path, PurePosixPath
+from types import CodeType
 from typing import Any
 
 from .manifest import ROOT
@@ -456,6 +459,55 @@ def _imported_source_is_isolated() -> bool:
     )
 
 
+def _direct_source_bytecode_is_trusted(package_root: Path | None = None) -> bool:
+    try:
+        root = (package_root or Path(__file__).parent).resolve(strict=True)
+        for path in root.rglob("*"):
+            relative = path.relative_to(root)
+            executable_cache = "__pycache__" in relative.parts or path.suffix in {
+                ".pyc",
+                ".pyd",
+                ".pyo",
+            }
+            if not executable_cache:
+                continue
+            if path.is_symlink():
+                return False
+            if path.is_dir():
+                continue
+            if not path.is_file() or path.suffix != ".pyc":
+                return False
+            bytecode = path.read_bytes()
+            if len(bytecode) < 16 or bytecode[:4] != importlib.util.MAGIC_NUMBER:
+                return False
+            flags = int.from_bytes(bytecode[4:8], "little")
+            if flags not in {0, 1, 3}:
+                return False
+            code = marshal.loads(bytecode[16:])
+            if not isinstance(code, CodeType):
+                return False
+            if "__pycache__" in relative.parts:
+                source = Path(importlib.util.source_from_cache(str(path)))
+            else:
+                source = path.with_suffix(".py")
+            source = source.resolve(strict=True)
+            if root != source and root not in source.parents:
+                return False
+            optimization = re.search(r"\.opt-([12])\.pyc$", path.name)
+            expected = compile(
+                source.read_bytes(),
+                code.co_filename,
+                "exec",
+                dont_inherit=True,
+                optimize=int(optimization.group(1)) if optimization else 0,
+            )
+            if marshal.dumps(expected) != bytecode[16:]:
+                return False
+    except (EOFError, OSError, RuntimeError, SyntaxError, TypeError, UnicodeError, ValueError):
+        return False
+    return True
+
+
 def forge_container_environment_errors(
     environment: object = None,
     *,
@@ -527,6 +579,8 @@ def _verified_execution_source(
         return None
     tracked_entries = [entry for entry in index_flags.stdout.split("\0") if entry]
     if any(not entry.startswith("H ") for entry in tracked_entries):
+        return None
+    if not _direct_source_bytecode_is_trusted():
         return None
     commit = current_git_commit(ROOT)
     if not _is_revision(commit):
@@ -1898,15 +1952,33 @@ def inspect_physical_preflight(
             **mount_policy,
             "swap_total_bytes": swap_total,
             "swap_used_bytes": (
-                swap_total - swap_free if swap_total >= 0 and swap_free >= 0 else None
+                swap_total - swap_free
+                if swap_total >= 0 and swap_free >= 0 and swap_total >= swap_free
+                else None
             ),
-            "host_memory_bytes": host_memory,
-            "host_memory_available_bytes": available_host_memory,
-            "container_memory_limit_bytes": cgroup_memory_limit,
-            "container_memory_current_bytes": cgroup_memory_current,
-            "container_memory_available_bytes": cgroup_memory_available,
-            "container_swap_limit_bytes": cgroup_limits["swap_limit_bytes"],
-            "container_pids_limit": cgroup_limits["pids_limit"],
+            "host_memory_bytes": host_memory if _is_int(host_memory, minimum=1) else None,
+            "host_memory_available_bytes": (
+                available_host_memory if _is_int(available_host_memory, minimum=1) else None
+            ),
+            "container_memory_limit_bytes": (
+                cgroup_memory_limit if _is_int(cgroup_memory_limit, minimum=1) else None
+            ),
+            "container_memory_current_bytes": (
+                cgroup_memory_current if _is_int(cgroup_memory_current, minimum=0) else None
+            ),
+            "container_memory_available_bytes": (
+                cgroup_memory_available if _is_int(cgroup_memory_available, minimum=0) else None
+            ),
+            "container_swap_limit_bytes": (
+                cgroup_limits["swap_limit_bytes"]
+                if _is_int(cgroup_limits["swap_limit_bytes"], minimum=0)
+                else None
+            ),
+            "container_pids_limit": (
+                cgroup_limits["pids_limit"]
+                if _is_int(cgroup_limits["pids_limit"], minimum=1)
+                else None
+            ),
         },
         "gpu": gpu,
         "errors": errors,

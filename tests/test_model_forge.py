@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import importlib.util
 import json
+import marshal
 import stat
 import subprocess
 from pathlib import Path
@@ -16,6 +18,7 @@ from oims.manifest import ROOT
 from oims.model_forge import (
     EXPECTED_TARGET_PARAMETERS,
     ForgePlanError,
+    _direct_source_bytecode_is_trusted,
     _forge_mount_policy,
     _installed_package_digest,
     compute_plan_hash,
@@ -774,9 +777,59 @@ def test_direct_simulation_refuses_index_hidden_source_changes(tmp_path: Path) -
     assert not list(tmp_path.iterdir())
 
 
+def test_direct_source_refuses_modified_ignored_bytecode(tmp_path: Path) -> None:
+    package_root = tmp_path / "oims"
+    source = package_root / "module.py"
+    source.parent.mkdir()
+    source.write_text("trusted = True\n", encoding="utf-8")
+    cache = Path(importlib.util.cache_from_source(str(source)))
+    cache.parent.mkdir()
+    trusted = compile(source.read_bytes(), str(source), "exec", dont_inherit=True)
+    cache.write_bytes(importlib.util.MAGIC_NUMBER + b"\0" * 12 + marshal.dumps(trusted))
+    assert _direct_source_bytecode_is_trusted(package_root) is True
+
+    malicious = compile("trusted = False\n", str(source), "exec", dont_inherit=True)
+    cache.write_bytes(importlib.util.MAGIC_NUMBER + b"\0" * 12 + marshal.dumps(malicious))
+
+    assert _direct_source_bytecode_is_trusted(package_root) is False
+
+
+def test_direct_simulation_refuses_untrusted_ignored_bytecode(tmp_path: Path) -> None:
+    clean = subprocess.CompletedProcess(
+        args=["git"],
+        returncode=0,
+        stdout="",
+        stderr="",
+    )
+    with (
+        patch.dict("oims.model_forge.os.environ", {}, clear=True),
+        patch("oims.model_forge.subprocess.run", side_effect=[clean, clean]),
+        patch("oims.model_forge._direct_source_bytecode_is_trusted", return_value=False),
+        pytest.raises(ForgePlanError, match="clean Git working tree"),
+    ):
+        simulate_forge_run(load_example(), artifacts_dir=tmp_path)
+    assert not list(tmp_path.iterdir())
+
+
 @pytest.mark.parametrize(
     ("memory_info", "cgroup_limits", "host_domain_bytes", "expected_error"),
     [
+        (
+            {
+                "MemTotal": 128 * 1024**3,
+                "MemAvailable": 0,
+                "SwapTotal": 0,
+                "SwapFree": 0,
+            },
+            {
+                "memory_limit_bytes": 124 * 1024**3,
+                "memory_current_bytes": 1 * 1024**3,
+                "swap_limit_bytes": 0,
+                "pids_limit": 512,
+            },
+            128 * 1024**3,
+            "available host memory is below the plan's host-memory ceiling",
+        ),
         (
             {
                 "MemTotal": 128 * 1024**3,
@@ -890,6 +943,8 @@ def test_probe_requires_current_memory_headroom(
         )
     assert result["lawful"] is False
     assert expected_error in result["errors"]
+    expected_available = memory_info["MemAvailable"] or None
+    assert result["sandbox_observation"]["host_memory_available_bytes"] == expected_available
     run.assert_not_called()
 
 
