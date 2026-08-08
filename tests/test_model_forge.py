@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import stat
 import subprocess
 from pathlib import Path
 from unittest.mock import patch
@@ -177,6 +178,8 @@ def test_simulation_emits_verifiable_non_model_evidence(tmp_path: Path) -> None:
     assert candidate["qmf_admissible"] is False
     evidence_files = [path for path in run_dir.rglob("*") if path.is_file()]
     assert receipt["output_bytes"] == sum(path.stat().st_size for path in evidence_files)
+    assert stat.S_IMODE(run_dir.stat().st_mode) == 0o755
+    assert all(stat.S_IMODE(path.stat().st_mode) == 0o644 for path in evidence_files)
 
 
 def test_simulation_refuses_to_overwrite_an_existing_run(tmp_path: Path) -> None:
@@ -236,6 +239,24 @@ def test_resealed_forged_telemetry_still_fails_semantic_replay(tmp_path: Path) -
     result = verify_forge_run(run_dir / "receipt.json")
     assert result["valid"] is False
     assert "Forge telemetry failed semantic replay" in result["errors"]
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    ["checkpoints/step-000001.json", "candidate/synthetic-candidate.json"],
+)
+def test_non_finite_exponent_artifacts_fail_closed(
+    tmp_path: Path,
+    relative_path: str,
+) -> None:
+    receipt = simulate_forge_run(load_example(), artifacts_dir=tmp_path)
+    run_dir = tmp_path / receipt["run_id"]
+    artifact = run_dir / relative_path
+    text = artifact.read_text(encoding="utf-8")
+    artifact.write_text(text.replace("\n}", ',\n  "overflow": 1e999\n}'), encoding="utf-8")
+    result = verify_forge_run(run_dir / "receipt.json")
+    assert result["valid"] is False
+    assert any("non-finite JSON number: 1e999" in error for error in result["errors"])
 
 
 @pytest.mark.parametrize("field", ["source_commit", "source_tree"])

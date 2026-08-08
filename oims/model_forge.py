@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -510,7 +511,18 @@ def _strict_json_loads(text: str) -> object:
     def reject_constant(value: str) -> None:
         raise ValueError(f"non-finite JSON number: {value}")
 
-    return json.loads(text, object_pairs_hook=pairs_hook, parse_constant=reject_constant)
+    def parse_float(value: str) -> float:
+        parsed = float(value)
+        if not math.isfinite(parsed):
+            raise ValueError(f"non-finite JSON number: {value}")
+        return parsed
+
+    return json.loads(
+        text,
+        object_pairs_hook=pairs_hook,
+        parse_constant=reject_constant,
+        parse_float=parse_float,
+    )
 
 
 def _parse_timestamp(value: object) -> datetime | None:
@@ -1077,6 +1089,11 @@ def simulate_forge_run(
         _atomic_write_text(staging_dir / "telemetry.jsonl", telemetry_bytes.decode("ascii"))
         atomic_write_json(candidate_dir / "synthetic-candidate.json", candidate)
         atomic_write_json(staging_dir / "receipt.json", sealed)
+        for directory in (staging_dir, checkpoint_dir, candidate_dir):
+            directory.chmod(0o755)
+        for artifact in staging_dir.rglob("*"):
+            if artifact.is_file():
+                artifact.chmod(0o644)
         staging_dir.rename(run_dir)
         published = True
     except OSError as exc:
