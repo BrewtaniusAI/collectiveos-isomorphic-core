@@ -57,6 +57,71 @@ function Test-PathsOverlap {
     )
 }
 
+function ConvertTo-ForgeByteCount {
+    param([AllowNull()][object]$Value)
+
+    if ($null -eq $Value) {
+        return $null
+    }
+    $Text = ([string]$Value).ToLowerInvariant()
+    if ($Text -notmatch '^(?<Amount>[0-9]+)(?<Unit>b|k|kb|kib|m|mb|mib|g|gb|gib|t|tb|tib)?$') {
+        return $null
+    }
+    $Multipliers = @{
+        '' = [System.Numerics.BigInteger]1
+        'b' = [System.Numerics.BigInteger]1
+        'k' = [System.Numerics.BigInteger]1024
+        'kb' = [System.Numerics.BigInteger]1024
+        'kib' = [System.Numerics.BigInteger]1024
+        'm' = [System.Numerics.BigInteger]1048576
+        'mb' = [System.Numerics.BigInteger]1048576
+        'mib' = [System.Numerics.BigInteger]1048576
+        'g' = [System.Numerics.BigInteger]1073741824
+        'gb' = [System.Numerics.BigInteger]1073741824
+        'gib' = [System.Numerics.BigInteger]1073741824
+        't' = [System.Numerics.BigInteger]1099511627776
+        'tb' = [System.Numerics.BigInteger]1099511627776
+        'tib' = [System.Numerics.BigInteger]1099511627776
+    }
+    $Unit = [string]$Matches.Unit
+    $Amount = [System.Numerics.BigInteger]::Parse(
+        [string]$Matches.Amount,
+        [System.Globalization.CultureInfo]::InvariantCulture
+    )
+    return ($Amount * $Multipliers[$Unit]).ToString(
+        [System.Globalization.CultureInfo]::InvariantCulture
+    )
+}
+
+function Test-ForgeTmpfsPolicy {
+    param([AllowNull()][object]$Value)
+
+    $Entries = @($Value)
+    if ($Entries.Count -ne 1) {
+        return $false
+    }
+    $Parts = ([string]$Entries[0]).Split(':', 2)
+    if ($Parts.Count -ne 2 -or $Parts[0] -ne '/tmp') {
+        return $false
+    }
+    $Options = @{}
+    foreach ($Option in $Parts[1].Split(',')) {
+        $Assignment = $Option.Split('=', 2)
+        if (
+            $Assignment.Count -ne 2 -or
+            $Options.ContainsKey($Assignment[0])
+        ) {
+            return $false
+        }
+        $Options[$Assignment[0]] = $Assignment[1]
+    }
+    return (
+        $Options.Count -eq 2 -and
+        (ConvertTo-ForgeByteCount $Options['size']) -eq '1073741824' -and
+        [string]$Options['mode'] -eq '1777'
+    )
+}
+
 function Invoke-ForgeImageBuild {
     param(
         [Parameter(Mandatory = $true)][string]$RepositoryRoot,
@@ -174,6 +239,11 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
 if ($BaseImage -notmatch '^[a-z0-9][a-z0-9._:/-]*@sha256:[0-9a-f]{64}$') {
     throw 'BaseImage must be pinned as image@sha256:<64 lowercase hex characters>.'
 }
+$ExpectedMemoryBytes = ConvertTo-ForgeByteCount $MemoryLimit
+if ($null -eq $ExpectedMemoryBytes -or $ExpectedMemoryBytes -eq '0') {
+    throw 'MemoryLimit must be a positive integral Docker byte size.'
+}
+$ExpectedSharedMemoryBytes = ConvertTo-ForgeByteCount '8gb'
 
 $PlanPath = (Resolve-Path -LiteralPath $Plan).Path
 $RepositoryRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
@@ -396,6 +466,31 @@ try {
     }
     foreach ($ServiceName in $ExpectedServices) {
         $Service = $ResolvedCompose.services.$ServiceName
+        $ExpectedServiceProperties = @(
+            'cap_drop',
+            'command',
+            'entrypoint',
+            'environment',
+            'image',
+            'mem_limit',
+            'memswap_limit',
+            'network_mode',
+            'pids_limit',
+            'pull_policy',
+            'read_only',
+            'security_opt',
+            'shm_size',
+            'tmpfs',
+            'user',
+            'volumes'
+        )
+        if ($ServiceName -eq 'probe') {
+            $ExpectedServiceProperties += @('deploy', 'profiles')
+        }
+        $ObservedServiceProperties = @($Service.PSObject.Properties.Name)
+        if (@(Compare-Object $ExpectedServiceProperties $ObservedServiceProperties).Count -ne 0) {
+            throw "Model Forge Compose service $ServiceName has an unexpected policy field."
+        }
         $BuildProperty = $Service.PSObject.Properties['build']
         if (
             $null -ne $BuildProperty -or
@@ -405,9 +500,39 @@ try {
             [string]$Service.network_mode -ne 'none' -or
             -not [bool]$Service.read_only -or
             (@($Service.cap_drop) -join ',') -ne 'ALL' -or
-            @($Service.security_opt) -notcontains 'no-new-privileges:true'
+            (@($Service.security_opt) -join ',') -ne 'no-new-privileges:true' -or
+            [int64]$Service.pids_limit -ne 512 -or
+            (ConvertTo-ForgeByteCount $Service.mem_limit) -ne $ExpectedMemoryBytes -or
+            (ConvertTo-ForgeByteCount $Service.memswap_limit) -ne $ExpectedMemoryBytes -or
+            (ConvertTo-ForgeByteCount $Service.shm_size) -ne $ExpectedSharedMemoryBytes -or
+            -not (Test-ForgeTmpfsPolicy $Service.tmpfs)
         ) {
             throw "Model Forge Compose service $ServiceName violates the pre-start sandbox policy."
+        }
+        if ($ServiceName -eq 'probe') {
+            if ((@($Service.profiles) -join ',') -ne 'probe') {
+                throw 'Model Forge Compose probe has an unexpected profile.'
+            }
+            if (
+                (@(Compare-Object @('resources') @($Service.deploy.PSObject.Properties.Name))).Count -ne 0 -or
+                (@(Compare-Object @('reservations') @($Service.deploy.resources.PSObject.Properties.Name))).Count -ne 0 -or
+                (@(Compare-Object @('devices') @($Service.deploy.resources.reservations.PSObject.Properties.Name))).Count -ne 0
+            ) {
+                throw 'Model Forge Compose probe has an unexpected resource reservation.'
+            }
+            $DeviceReservations = @($Service.deploy.resources.reservations.devices)
+            if ($DeviceReservations.Count -ne 1) {
+                throw 'Model Forge Compose probe must expose exactly one GPU reservation.'
+            }
+            $Device = $DeviceReservations[0]
+            if (
+                (@(Compare-Object @('capabilities', 'device_ids', 'driver') @($Device.PSObject.Properties.Name))).Count -ne 0 -or
+                [string]$Device.driver -ne 'nvidia' -or
+                (@($Device.device_ids) -join ',') -ne [string]$GpuDeviceId -or
+                (@($Device.capabilities) -join ',') -ne 'gpu'
+            ) {
+                throw 'Model Forge Compose probe has an unexpected GPU reservation.'
+            }
         }
         if ((@($Service.entrypoint) -join "`0") -ne ($ExpectedEntrypoint -join "`0")) {
             throw "Model Forge Compose service $ServiceName has an unexpected entrypoint."

@@ -2348,6 +2348,26 @@ def test_launcher_enforces_process_and_mount_policy_before_container_start() -> 
     assert launcher.index("switch ($Mode)") < launcher.index("run --rm")
 
 
+def test_launcher_validates_complete_rendered_resource_policy() -> None:
+    launcher = (ROOT / "scripts" / "run_model_forge.ps1").read_text(encoding="utf-8")
+
+    assert "function ConvertTo-ForgeByteCount" in launcher
+    assert "function Test-ForgeTmpfsPolicy" in launcher
+    assert "$ObservedServiceProperties" in launcher
+    assert "has an unexpected policy field" in launcher
+    assert "[int64]$Service.pids_limit -ne 512" in launcher
+    assert "ConvertTo-ForgeByteCount $Service.mem_limit" in launcher
+    assert "ConvertTo-ForgeByteCount $Service.memswap_limit" in launcher
+    assert "ConvertTo-ForgeByteCount $Service.shm_size" in launcher
+    assert "Test-ForgeTmpfsPolicy $Service.tmpfs" in launcher
+    assert "$DeviceReservations.Count -ne 1" in launcher
+    assert "@('capabilities', 'device_ids', 'driver')" in launcher
+    assert "(@($Device.device_ids) -join ',') -ne [string]$GpuDeviceId" in launcher
+    policy = launcher.index("$ObservedServiceProperties")
+    build = launcher.index("$ForgeImageId = Invoke-ForgeImageBuild `")
+    assert policy < build
+
+
 def test_launcher_executes_validated_snapshot_without_ambient_mode_inputs() -> None:
     launcher = (ROOT / "scripts" / "run_model_forge.ps1").read_text(encoding="utf-8")
     receipt_clear = "[Environment]::SetEnvironmentVariable('FORGE_RECEIPT', $null, 'Process')"
