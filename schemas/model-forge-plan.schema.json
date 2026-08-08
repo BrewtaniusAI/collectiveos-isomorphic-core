@@ -1,0 +1,306 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oims.collective-osp.org/schemas/model-forge-plan-1.0.0.json",
+  "title": "OIMS Model Forge Plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "plan_id",
+    "mode",
+    "evidence_class",
+    "qmf_contract",
+    "target",
+    "sandbox",
+    "resources",
+    "recipe",
+    "checkpoints",
+    "simulation",
+    "plan_hash"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0.0"},
+    "plan_id": {"type": "string", "minLength": 1},
+    "mode": {"enum": ["simulate", "probe"]},
+    "evidence_class": {"enum": ["SIMULATED", "PHYSICAL_PREFLIGHT"]},
+    "qmf_contract": {"$ref": "#/$defs/qmf_contract"},
+    "target": {"$ref": "#/$defs/target"},
+    "sandbox": {"$ref": "#/$defs/sandbox"},
+    "resources": {"$ref": "#/$defs/resources"},
+    "recipe": {"$ref": "#/$defs/recipe"},
+    "checkpoints": {"$ref": "#/$defs/checkpoints"},
+    "simulation": {
+      "oneOf": [
+        {"$ref": "#/$defs/simulation"},
+        {"type": "null"}
+      ]
+    },
+    "plan_hash": {"$ref": "#/$defs/digest"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"mode": {"const": "simulate"}}, "required": ["mode"]},
+      "then": {
+        "properties": {
+          "evidence_class": {"const": "SIMULATED"},
+          "simulation": {"$ref": "#/$defs/simulation"}
+        }
+      },
+      "else": {
+        "properties": {
+          "evidence_class": {"const": "PHYSICAL_PREFLIGHT"},
+          "simulation": {"type": "null"}
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "repository": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "qmf_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "training_plan_hash",
+        "base_source_manifest_hash",
+        "base_artifact_hash",
+        "base_model_program_hash",
+        "base_model_program_rule_hash",
+        "dataset_manifest_hash",
+        "toolchain_lock_hash",
+        "recipe_hash",
+        "budget_hash",
+        "benchmark_suite_hash",
+        "rollback_artifact_hash",
+        "output_repository_id",
+        "output_format",
+        "evidence_only",
+        "admissible"
+      ],
+      "properties": {
+        "schema_version": {"const": "10.0.0"},
+        "training_plan_hash": {"$ref": "#/$defs/digest"},
+        "base_source_manifest_hash": {"$ref": "#/$defs/digest"},
+        "base_artifact_hash": {"$ref": "#/$defs/digest"},
+        "base_model_program_hash": {"$ref": "#/$defs/digest"},
+        "base_model_program_rule_hash": {"$ref": "#/$defs/digest"},
+        "dataset_manifest_hash": {"$ref": "#/$defs/digest"},
+        "toolchain_lock_hash": {"$ref": "#/$defs/digest"},
+        "recipe_hash": {"$ref": "#/$defs/digest"},
+        "budget_hash": {"$ref": "#/$defs/digest"},
+        "benchmark_suite_hash": {"$ref": "#/$defs/digest"},
+        "rollback_artifact_hash": {"$ref": "#/$defs/digest"},
+        "output_repository_id": {"$ref": "#/$defs/repository"},
+        "output_format": {"const": "peft-adapter"},
+        "evidence_only": {"const": true},
+        "admissible": {"const": false}
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository_id",
+        "revision",
+        "local_model_path",
+        "local_dataset_path",
+        "local_files_only",
+        "trust_remote_code"
+      ],
+      "properties": {
+        "repository_id": {"const": "openai/gpt-oss-20b"},
+        "revision": {"const": "6cee5e81ee83917806bbde320786a8fb61efebee"},
+        "local_model_path": {"type": "string", "pattern": "^/forge/inputs/base(?:/.*)?$"},
+        "local_dataset_path": {
+          "type": "string",
+          "pattern": "^/forge/inputs/dataset(?:/.*)?$"
+        },
+        "local_files_only": {"const": true},
+        "trust_remote_code": {"const": false}
+      }
+    },
+    "sandbox": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runtime",
+        "network_mode",
+        "read_only_root",
+        "drop_all_capabilities",
+        "no_new_privileges",
+        "seccomp_profile",
+        "base_model_mount_read_only",
+        "dataset_mount_read_only",
+        "output_mount",
+        "tmpfs_mount"
+      ],
+      "properties": {
+        "runtime": {"const": "oci"},
+        "network_mode": {"const": "none"},
+        "read_only_root": {"const": true},
+        "drop_all_capabilities": {"const": true},
+        "no_new_privileges": {"const": true},
+        "seccomp_profile": {"const": "runtime-default"},
+        "base_model_mount_read_only": {"const": true},
+        "dataset_mount_read_only": {"const": true},
+        "output_mount": {"const": "/forge/output"},
+        "tmpfs_mount": {"const": "/tmp"}
+      }
+    },
+    "memory_domain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "capacity_bytes"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "kind": {"enum": ["gpu-vram", "host-ram"]},
+        "capacity_bytes": {"type": "integer", "minimum": 1}
+      }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "hardware_profile_id",
+        "device_id",
+        "memory_domains",
+        "max_duration_seconds",
+        "max_steps",
+        "max_input_tokens",
+        "max_output_bytes",
+        "max_peak_host_bytes",
+        "max_peak_device_bytes",
+        "max_energy_wh",
+        "max_cost_microusd",
+        "max_temperature_millic",
+        "allow_swap"
+      ],
+      "properties": {
+        "hardware_profile_id": {"type": "string", "minLength": 1},
+        "device_id": {"type": "integer", "minimum": 0},
+        "memory_domains": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {"$ref": "#/$defs/memory_domain"}
+        },
+        "max_duration_seconds": {"type": "integer", "minimum": 1},
+        "max_steps": {"type": "integer", "minimum": 1},
+        "max_input_tokens": {"type": "integer", "minimum": 1},
+        "max_output_bytes": {"type": "integer", "minimum": 1},
+        "max_peak_host_bytes": {"type": "integer", "minimum": 1},
+        "max_peak_device_bytes": {"type": "integer", "minimum": 1},
+        "max_energy_wh": {"type": "integer", "minimum": 1},
+        "max_cost_microusd": {"type": "integer", "minimum": 0},
+        "max_temperature_millic": {"type": "integer", "minimum": 1, "maximum": 95000},
+        "allow_swap": {"const": false}
+      }
+    },
+    "canonical_strings": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "recipe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "method",
+        "output_format",
+        "merge_adapter",
+        "preserve_harmony_format",
+        "dynamic_packing",
+        "train_on_responses_only",
+        "gradient_checkpointing",
+        "seed",
+        "max_length",
+        "epochs_milli",
+        "learning_rate_ppb",
+        "per_device_batch_size",
+        "gradient_accumulation_steps",
+        "lora_rank",
+        "lora_alpha",
+        "lora_dropout_bps",
+        "target_modules",
+        "target_parameters"
+      ],
+      "properties": {
+        "method": {"const": "lora-sft"},
+        "output_format": {"const": "peft-adapter"},
+        "merge_adapter": {"const": false},
+        "preserve_harmony_format": {"const": true},
+        "dynamic_packing": {"const": true},
+        "train_on_responses_only": {"const": true},
+        "gradient_checkpointing": {"const": true},
+        "seed": {"type": "integer", "minimum": 0},
+        "max_length": {"type": "integer", "minimum": 1},
+        "epochs_milli": {"type": "integer", "minimum": 1},
+        "learning_rate_ppb": {"type": "integer", "minimum": 1},
+        "per_device_batch_size": {"type": "integer", "minimum": 1},
+        "gradient_accumulation_steps": {"type": "integer", "minimum": 1},
+        "lora_rank": {"type": "integer", "minimum": 1},
+        "lora_alpha": {"type": "integer", "minimum": 1},
+        "lora_dropout_bps": {"type": "integer", "minimum": 0, "maximum": 10000},
+        "target_modules": {"const": ["all-linear"]},
+        "target_parameters": {
+          "const": [
+            "15.mlp.experts.down_proj",
+            "15.mlp.experts.gate_up_proj",
+            "23.mlp.experts.down_proj",
+            "23.mlp.experts.gate_up_proj",
+            "7.mlp.experts.down_proj",
+            "7.mlp.experts.gate_up_proj"
+          ]
+        }
+      }
+    },
+    "checkpoints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["interval_steps", "retain_last", "rollback_to_base", "hash_chain"],
+      "properties": {
+        "interval_steps": {"type": "integer", "minimum": 1},
+        "retain_last": {"type": "integer", "minimum": 1},
+        "rollback_to_base": {"const": true},
+        "hash_chain": {"const": true}
+      }
+    },
+    "simulation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "clock_start",
+        "step_duration_seconds",
+        "steps",
+        "input_tokens_per_step",
+        "output_bytes_per_checkpoint",
+        "peak_host_bytes",
+        "peak_device_bytes",
+        "energy_wh_per_step",
+        "max_temperature_millic",
+        "synthetic_loss_millionths"
+      ],
+      "properties": {
+        "clock_start": {"type": "string", "format": "date-time"},
+        "step_duration_seconds": {"type": "integer", "minimum": 1},
+        "steps": {"type": "integer", "minimum": 1},
+        "input_tokens_per_step": {"type": "integer", "minimum": 1},
+        "output_bytes_per_checkpoint": {"type": "integer", "minimum": 1},
+        "peak_host_bytes": {"type": "integer", "minimum": 1},
+        "peak_device_bytes": {"type": "integer", "minimum": 1},
+        "energy_wh_per_step": {"type": "integer", "minimum": 1},
+        "max_temperature_millic": {"type": "integer", "minimum": 1},
+        "synthetic_loss_millionths": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "integer", "minimum": 0}
+        }
+      }
+    }
+  }
+}

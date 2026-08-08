@@ -1,0 +1,123 @@
+{
+  "schema_version": "1.0.0",
+  "plan_id": "gpt-oss-20b-collective-coder-4090-simulation-v1",
+  "mode": "simulate",
+  "evidence_class": "SIMULATED",
+  "qmf_contract": {
+    "schema_version": "10.0.0",
+    "training_plan_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+    "base_source_manifest_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+    "base_artifact_hash": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+    "base_model_program_hash": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+    "base_model_program_rule_hash": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+    "dataset_manifest_hash": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+    "toolchain_lock_hash": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+    "recipe_hash": "sha256:8888888888888888888888888888888888888888888888888888888888888888",
+    "budget_hash": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+    "benchmark_suite_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "rollback_artifact_hash": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+    "output_repository_id": "BrewtaniusAI/qmf-gpt-oss-20b-coder-adapter",
+    "output_format": "peft-adapter",
+    "evidence_only": true,
+    "admissible": false
+  },
+  "target": {
+    "repository_id": "openai/gpt-oss-20b",
+    "revision": "6cee5e81ee83917806bbde320786a8fb61efebee",
+    "local_model_path": "/forge/inputs/base",
+    "local_dataset_path": "/forge/inputs/dataset",
+    "local_files_only": true,
+    "trust_remote_code": false
+  },
+  "sandbox": {
+    "runtime": "oci",
+    "network_mode": "none",
+    "read_only_root": true,
+    "drop_all_capabilities": true,
+    "no_new_privileges": true,
+    "seccomp_profile": "runtime-default",
+    "base_model_mount_read_only": true,
+    "dataset_mount_read_only": true,
+    "output_mount": "/forge/output",
+    "tmpfs_mount": "/tmp"
+  },
+  "resources": {
+    "hardware_profile_id": "collective-rtx4090-24g-host128g-v1",
+    "device_id": 0,
+    "memory_domains": [
+      {
+        "id": "gpu0-vram",
+        "kind": "gpu-vram",
+        "capacity_bytes": 25769803776
+      },
+      {
+        "id": "host0-ram",
+        "kind": "host-ram",
+        "capacity_bytes": 137438953472
+      }
+    ],
+    "max_duration_seconds": 900,
+    "max_steps": 8,
+    "max_input_tokens": 4096,
+    "max_output_bytes": 10485760,
+    "max_peak_host_bytes": 128849018880,
+    "max_peak_device_bytes": 24696061952,
+    "max_energy_wh": 100,
+    "max_cost_microusd": 0,
+    "max_temperature_millic": 85000,
+    "allow_swap": false
+  },
+  "recipe": {
+    "method": "lora-sft",
+    "output_format": "peft-adapter",
+    "merge_adapter": false,
+    "preserve_harmony_format": true,
+    "dynamic_packing": true,
+    "train_on_responses_only": true,
+    "gradient_checkpointing": true,
+    "seed": 42,
+    "max_length": 512,
+    "epochs_milli": 1000,
+    "learning_rate_ppb": 200000,
+    "per_device_batch_size": 1,
+    "gradient_accumulation_steps": 4,
+    "lora_rank": 8,
+    "lora_alpha": 16,
+    "lora_dropout_bps": 0,
+    "target_modules": [
+      "all-linear"
+    ],
+    "target_parameters": [
+      "15.mlp.experts.down_proj",
+      "15.mlp.experts.gate_up_proj",
+      "23.mlp.experts.down_proj",
+      "23.mlp.experts.gate_up_proj",
+      "7.mlp.experts.down_proj",
+      "7.mlp.experts.gate_up_proj"
+    ]
+  },
+  "checkpoints": {
+    "interval_steps": 1,
+    "retain_last": 4,
+    "rollback_to_base": true,
+    "hash_chain": true
+  },
+  "simulation": {
+    "clock_start": "2026-01-01T00:00:00+00:00",
+    "step_duration_seconds": 3,
+    "steps": 4,
+    "input_tokens_per_step": 128,
+    "output_bytes_per_checkpoint": 512,
+    "peak_host_bytes": 1073741824,
+    "peak_device_bytes": 2147483648,
+    "energy_wh_per_step": 1,
+    "max_temperature_millic": 55000,
+    "synthetic_loss_millionths": [
+      900000,
+      700000,
+      550000,
+      450000
+    ]
+  },
+  "plan_hash": "sha256:783d6fd324c9fb78d69c903f9f6effddc1bf50a9c6cdb5aa17b719a944c5fce3"
+}

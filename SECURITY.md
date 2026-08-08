@@ -2,7 +2,7 @@
 
 ## Supported version
 
-The current 0.3.x line is the only supported implementation surface.
+The current 0.4.x line is the only supported implementation surface.
 
 ## Report handling
 
@@ -19,6 +19,11 @@ sensitive details.
 - agent role bindings grant no filesystem, shell, network, or device authority;
 - generated receipts are tamper-evident but not signed or externally immutable;
 - community GGUF conversions are explicitly distinguished from official upstream GGUFs.
+- Model Forge simulations are never QMF-admissible or deployable artifacts;
+- physical Forge preflight requires an exact plan hash, explicit unlock, no network, no Linux
+  capabilities, no-new-privileges, a read-only root filesystem, and unused swap;
+- base weights, datasets, and plans are read-only mounts; only the evidence directory is writable;
+- Model Forge 0.4 has no physical training, adapter merge, publication, serving, or promotion state.
 
 ## Secret policy
 

@@ -12,4 +12,6 @@
 - Receipts are SHA-256 sealed but are not signed or externally WORM-anchored.
 - Base-model training data, training, and tokenizer construction remain upstream concerns.
 - OIMS-authored source does not yet declare the owner's intended license.
-- Distributed multi-node ISO-Mesh execution is deferred beyond 0.3.0.
+- Model Forge 0.4 simulates training shape and probes the sandbox; it does not load weights,
+  execute gradients, merge adapters, publish models, or produce QMF-admissible evidence.
+- Distributed multi-node ISO-Mesh execution is deferred beyond 0.4.0.

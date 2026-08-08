@@ -29,10 +29,21 @@
 - [x] Assertive CI suite
 - [x] Security and contribution policies
 
+## Virtual Model Forge
+
+- [x] Strict QMF v0.10 plan binding and canonical plan hash
+- [x] Deterministic simulation with telemetry and checkpoint replay
+- [x] Synthetic candidate that cannot be mistaken for a model or PEFT adapter
+- [x] Offline, read-only, non-root OCI boundary with explicit GPU selection
+- [x] Dual-unlock non-training physical preflight
+- [x] Fail-closed Forge receipt schemas and tamper tests
+
 ## External/owner gates
 
 - [ ] Target-machine full-hash check and heterogeneous CUDA run
 - [ ] Verified `WEIGHT_BACKED` report
+- [ ] Byte-exact GPT-OSS snapshot and rights-reviewed Harmony dataset
+- [ ] Hashed physical training toolchain and one-step LoRA memory preflight
 - [ ] Signed/WORM receipt integration
 - [ ] Independent semantic-equivalence evaluation
 - [ ] OIMS source-code license

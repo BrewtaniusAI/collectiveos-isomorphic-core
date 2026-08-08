@@ -11,7 +11,10 @@ Reproduction is anchored by:
 - one shared contract hash;
 - deterministic decoding settings and seed;
 - source-commit capture;
-- sealed nested receipts and an independent verification command.
+- sealed nested receipts and an independent verification command;
+- canonical QMF-bound Forge plans, deterministic virtual clocks, and hash-linked synthetic
+  checkpoints;
+- explicit separation of simulated, physical-preflight, and QMF-admissible evidence classes.
 
 ```bash
 python -m pip install -e ".[weights]"
@@ -21,6 +24,9 @@ python -m oims mesh --prompt "family conformance probe"
 python -m oims verify \
   --path artifacts/conformance_report.jsonld \
   --require-weight-backed
+python -m oims forge simulate \
+  --plan forge/examples/gpt-oss-20b-4090-simulation.plan.json \
+  --output artifacts/model-forge
 ```
 
 Generated text can vary across llama.cpp versions, hardware kernels, and floating-point

@@ -1,0 +1,85 @@
+name: collective-model-forge
+
+x-forge-common: &forge-common
+  build:
+    context: ..
+    dockerfile: forge/Containerfile
+    args:
+      FORGE_BASE_IMAGE: ${FORGE_BASE_IMAGE:?set FORGE_BASE_IMAGE to an immutable image@sha256 digest}
+      FORGE_SOURCE_COMMIT: ${FORGE_SOURCE_COMMIT:?set FORGE_SOURCE_COMMIT to the exact source commit}
+  image: collective-model-forge:${FORGE_IMAGE_TAG:-local}
+  network_mode: none
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  pids_limit: 512
+  mem_limit: ${FORGE_MEMORY_LIMIT:-120g}
+  memswap_limit: ${FORGE_MEMORY_LIMIT:-120g}
+  shm_size: 8gb
+  environment:
+    HF_HUB_OFFLINE: "1"
+    TRANSFORMERS_OFFLINE: "1"
+    HF_DATASETS_OFFLINE: "1"
+    OIMS_FORGE_CONTAINER: "1"
+    OIMS_FORGE_BASE_IMAGE: ${FORGE_BASE_IMAGE:?set FORGE_BASE_IMAGE to an immutable image@sha256 digest}
+    OIMS_FORGE_SOURCE_COMMIT: ${FORGE_SOURCE_COMMIT:?set FORGE_SOURCE_COMMIT to the exact source commit}
+  tmpfs:
+    - /tmp:size=1073741824,mode=1777
+  volumes:
+    - type: bind
+      source: ${FORGE_PLAN:?set FORGE_PLAN to an exact Forge plan}
+      target: /forge/plan.json
+      read_only: true
+    - type: bind
+      source: ${FORGE_OUTPUT:?set FORGE_OUTPUT to the local evidence directory}
+      target: /forge/output
+    - type: bind
+      source: ${FORGE_BASE_MODEL_DIR:?set FORGE_BASE_MODEL_DIR to the local base snapshot}
+      target: /forge/inputs/base
+      read_only: true
+    - type: bind
+      source: ${FORGE_DATASET_DIR:?set FORGE_DATASET_DIR to the admitted dataset}
+      target: /forge/inputs/dataset
+      read_only: true
+
+services:
+  simulate:
+    <<: *forge-common
+    command:
+      - forge
+      - simulate
+      - --plan
+      - /forge/plan.json
+      - --output
+      - /forge/output
+
+  probe:
+    <<: *forge-common
+    profiles:
+      - probe
+    environment:
+      HF_HUB_OFFLINE: "1"
+      TRANSFORMERS_OFFLINE: "1"
+      HF_DATASETS_OFFLINE: "1"
+      OIMS_FORGE_CONTAINER: "1"
+      OIMS_FORGE_ENABLE_PROBE: "1"
+      OIMS_FORGE_BASE_IMAGE: ${FORGE_BASE_IMAGE:?set FORGE_BASE_IMAGE to an immutable image@sha256 digest}
+      OIMS_FORGE_SOURCE_COMMIT: ${FORGE_SOURCE_COMMIT:?set FORGE_SOURCE_COMMIT to the exact source commit}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["${FORGE_GPU_DEVICE_ID:-0}"]
+              capabilities: [gpu]
+    command:
+      - forge
+      - probe
+      - --plan
+      - /forge/plan.json
+      - --output
+      - /forge/output
+      - --accept-plan-hash
+      - ${FORGE_ACCEPT_PLAN_HASH:-unset}

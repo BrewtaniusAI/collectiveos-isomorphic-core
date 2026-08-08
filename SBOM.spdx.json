@@ -2,17 +2,17 @@
   "spdxVersion": "SPDX-2.3",
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
-  "name": "collectiveos-isomorphic-core-0.3.0-source-sbom",
-  "documentNamespace": "https://github.com/BrewtaniusAI/collectiveos-isomorphic-core/sbom/0.3.0",
+  "name": "collectiveos-isomorphic-core-0.4.0-source-sbom",
+  "documentNamespace": "https://github.com/BrewtaniusAI/collectiveos-isomorphic-core/sbom/0.4.0",
   "creationInfo": {
-    "created": "2026-07-27T00:00:00Z",
+    "created": "2026-08-07T00:00:00Z",
     "creators": ["Tool: Codex source dependency inventory"]
   },
   "packages": [
     {
       "name": "collectiveos-isomorphic-core",
       "SPDXID": "SPDXRef-Package-OIMS",
-      "versionInfo": "0.3.0",
+      "versionInfo": "0.4.0",
       "downloadLocation": "https://github.com/BrewtaniusAI/collectiveos-isomorphic-core",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",

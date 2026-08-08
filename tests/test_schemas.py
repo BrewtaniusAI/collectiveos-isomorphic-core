@@ -14,6 +14,10 @@ class SchemaTests(unittest.TestCase):
             "collective-request.schema.json",
             "collective-response.schema.json",
             "family-conformance.schema.json",
+            "model-forge-checkpoint.schema.json",
+            "model-forge-plan.schema.json",
+            "model-forge-preflight-receipt.schema.json",
+            "model-forge-run-receipt.schema.json",
             "model-manifest.schema.json",
             "tier-conformance.schema.json",
         }

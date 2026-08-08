@@ -1,0 +1,195 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oims.collective-osp.org/schemas/model-forge-preflight-receipt-1.0.0.json",
+  "title": "OIMS Model Forge Physical Preflight Receipt",
+  "type": "object",
+  "required": [
+    "@context",
+    "@type",
+    "schema_version",
+    "plan_id",
+    "plan_hash",
+    "mode",
+    "status",
+    "lawful",
+    "evidence_class",
+    "weights_loaded",
+    "training_started",
+    "qmf_admissible",
+    "deployable_artifact",
+    "network_mode",
+    "sandbox_observation",
+    "gpu",
+    "errors",
+    "governance_route",
+    "source_commit",
+    "record_sha256"
+  ],
+  "properties": {
+    "@context": {"const": "https://oims.collective-osp.org/model-forge/v1"},
+    "@type": {"const": "OIMSModelForgePreflightReceipt"},
+    "schema_version": {"const": "1.0.0"},
+    "plan_id": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "string", "minLength": 1}
+      ]
+    },
+    "plan_hash": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+      ]
+    },
+    "mode": {"const": "probe"},
+    "status": {"enum": ["READY", "REFUSED"]},
+    "lawful": {"type": "boolean"},
+    "evidence_class": {"const": "PHYSICAL_PREFLIGHT"},
+    "weights_loaded": {"const": false},
+    "training_started": {"const": false},
+    "qmf_admissible": {"const": false},
+    "deployable_artifact": {"const": false},
+    "network_mode": {"const": "none"},
+    "sandbox_observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "effective_user_non_root",
+        "capabilities_empty",
+        "no_new_privileges",
+        "seccomp_filter",
+        "read_only_root",
+        "default_route_present",
+        "only_loopback_interface",
+        "base_image_pinned",
+        "plan_read_only",
+        "base_model_read_only",
+        "dataset_read_only",
+        "output_writable",
+        "tmpfs_active",
+        "swap_total_bytes",
+        "swap_used_bytes",
+        "host_memory_bytes",
+        "container_memory_limit_bytes",
+        "container_swap_limit_bytes",
+        "container_pids_limit"
+      ],
+      "properties": {
+        "effective_user_non_root": {"type": "boolean"},
+        "capabilities_empty": {"type": "boolean"},
+        "no_new_privileges": {"type": "boolean"},
+        "seccomp_filter": {"type": "boolean"},
+        "read_only_root": {"type": "boolean"},
+        "default_route_present": {"type": "boolean"},
+        "only_loopback_interface": {"type": "boolean"},
+        "base_image_pinned": {"type": "boolean"},
+        "plan_read_only": {"type": "boolean"},
+        "base_model_read_only": {"type": "boolean"},
+        "dataset_read_only": {"type": "boolean"},
+        "output_writable": {"type": "boolean"},
+        "tmpfs_active": {"type": "boolean"},
+        "swap_total_bytes": {"type": "integer", "minimum": -1},
+        "swap_used_bytes": {
+          "oneOf": [
+            {"type": "null"},
+            {"type": "integer", "minimum": 0}
+          ]
+        },
+        "host_memory_bytes": {
+          "oneOf": [
+            {"type": "null"},
+            {"type": "integer", "minimum": 1}
+          ]
+        },
+        "container_memory_limit_bytes": {
+          "oneOf": [
+            {"type": "null"},
+            {"type": "integer", "minimum": 1}
+          ]
+        },
+        "container_swap_limit_bytes": {
+          "oneOf": [
+            {"type": "null"},
+            {"type": "integer", "minimum": 0}
+          ]
+        },
+        "container_pids_limit": {
+          "oneOf": [
+            {"type": "null"},
+            {"type": "integer", "minimum": 1}
+          ]
+        }
+      }
+    },
+    "gpu": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "uuid",
+            "name",
+            "total_bytes",
+            "used_bytes",
+            "temperature_millic",
+            "power_milliwatts",
+            "power_limit_milliwatts"
+          ],
+          "properties": {
+            "uuid": {"type": "string", "minLength": 1},
+            "name": {"const": "NVIDIA GeForce RTX 4090"},
+            "total_bytes": {"type": "integer", "minimum": 1},
+            "used_bytes": {"type": "integer", "minimum": 0},
+            "temperature_millic": {"type": "integer", "minimum": 0},
+            "power_milliwatts": {"type": "integer", "minimum": 0},
+            "power_limit_milliwatts": {"type": "integer", "minimum": 1}
+          }
+        }
+      ]
+    },
+    "errors": {"type": "array", "items": {"type": "string"}},
+    "governance_route": {"const": ["QC", "GATA", "GATA_PRIME"]},
+    "source_commit": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+      ]
+    },
+    "record_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {"properties": {"lawful": {"const": true}}, "required": ["lawful"]},
+      "then": {
+        "properties": {
+          "status": {"const": "READY"},
+          "errors": {"maxItems": 0},
+          "gpu": {"type": "object"},
+          "sandbox_observation": {
+            "properties": {
+              "effective_user_non_root": {"const": true},
+              "capabilities_empty": {"const": true},
+              "no_new_privileges": {"const": true},
+              "seccomp_filter": {"const": true},
+              "read_only_root": {"const": true},
+              "default_route_present": {"const": false},
+              "only_loopback_interface": {"const": true},
+              "base_image_pinned": {"const": true},
+              "plan_read_only": {"const": true},
+              "base_model_read_only": {"const": true},
+              "dataset_read_only": {"const": true},
+              "output_writable": {"const": true},
+              "tmpfs_active": {"const": true},
+              "swap_used_bytes": {"const": 0},
+              "container_swap_limit_bytes": {"const": 0},
+              "container_pids_limit": {"type": "integer", "maximum": 512}
+            }
+          }
+        }
+      },
+      "else": {"properties": {"status": {"const": "REFUSED"}}}
+    }
+  ]
+}

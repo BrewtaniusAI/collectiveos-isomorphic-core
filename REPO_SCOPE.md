@@ -15,6 +15,8 @@ agent family and its CollectiveOS role-binding bridge.
 - standalone JSON Schemas and a fail-closed artifact verifier;
 - deterministic fixture tests that cannot claim weight-backed evidence;
 - target-machine diagnostics, download scripts, and a one-command acceptance path;
+- strict QMF-bound Forge plans, deterministic training simulation, and receipt replay;
+- offline OCI isolation and a non-training RTX 4090 sandbox preflight;
 - claims, limitations, reproducibility, review, and release-state documentation.
 
 ## Included but not yet physically accepted
@@ -22,6 +24,8 @@ agent family and its CollectiveOS role-binding bridge.
 - the real 28,170,935,456-byte family download;
 - RTX 4090 execution of Qwen, Mistral, and Kimi;
 - a final `WEIGHT_BACKED` family report from the target workstation.
+- a physical GPT-OSS one-step LoRA memory preflight after exact source, dataset, and toolchain
+  admission.
 
 These require the owner's machine and cannot be truthfully completed in hosted CI.
 
@@ -39,7 +43,7 @@ are active.
 ## Explicitly outside the OIMS claim
 
 - the full theoretical corpus and all research artifacts;
-- base-model training or tokenizer construction;
+- base-model training, tokenizer construction, or an authorized physical fine-tune;
 - identical neural behavior or wording across architectures;
 - autonomous workers or unsupervised actuation;
 - every possible hardware and deployment configuration;

@@ -1,0 +1,429 @@
+from __future__ import annotations
+
+import json
+import subprocess
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+import yaml
+
+from oims.manifest import ROOT
+from oims.model_forge import (
+    EXPECTED_TARGET_PARAMETERS,
+    ForgePlanError,
+    compute_plan_hash,
+    forge_container_environment_errors,
+    forge_plan_decision,
+    inspect_physical_preflight,
+    load_forge_plan,
+    prefixed_file_digest,
+    qmf_canonical_json,
+    simulate_forge_run,
+    validate_forge_plan,
+    verify_forge_run,
+)
+from oims.proof import seal_record
+
+EXAMPLE = ROOT / "forge" / "examples" / "gpt-oss-20b-4090-simulation.plan.json"
+PROBE_EXAMPLE = ROOT / "forge" / "examples" / "gpt-oss-20b-4090-probe.plan.json"
+
+
+def load_example() -> dict[str, object]:
+    return json.loads(EXAMPLE.read_text(encoding="utf-8"))
+
+
+def rehash(plan: dict[str, object]) -> dict[str, object]:
+    plan["plan_hash"] = compute_plan_hash(plan)
+    return plan
+
+
+def probe_plan() -> dict[str, object]:
+    return json.loads(PROBE_EXAMPLE.read_text(encoding="utf-8"))
+
+
+def test_checked_in_simulation_plan_is_exact_and_fail_closed() -> None:
+    plan = load_forge_plan(EXAMPLE)
+    assert validate_forge_plan(plan) == ()
+    decision = forge_plan_decision(plan)
+    assert decision["lawful"] is True
+    assert decision["qmf_admissible"] is False
+    assert decision["evidence_class"] == "SIMULATED"
+
+
+def test_checked_in_probe_plan_is_exact_and_non_training() -> None:
+    plan = load_forge_plan(PROBE_EXAMPLE)
+    assert validate_forge_plan(plan) == ()
+    assert (
+        plan["plan_hash"]
+        == "sha256:a7d8598120a94de263af8f3d2de54e5be0da4142c10c8aeef4d1467e8266f4b6"
+    )
+    decision = forge_plan_decision(plan)
+    assert decision["lawful"] is True
+    assert decision["mode"] == "probe"
+    assert decision["qmf_admissible"] is False
+
+
+@pytest.mark.parametrize(
+    ("path", "value", "expected"),
+    [
+        (("sandbox", "network_mode"), "bridge", "network_mode"),
+        (("sandbox", "read_only_root"), 1, "read_only_root"),
+        (("target", "local_files_only"), 1, "local_files_only"),
+        (("target", "trust_remote_code"), True, "trust_remote_code"),
+        (("recipe", "merge_adapter"), True, "merge_adapter"),
+        (("resources", "allow_swap"), True, "allow_swap"),
+        (("qmf_contract", "admissible"), True, "admissible"),
+    ],
+)
+def test_privilege_and_identity_boundaries_refuse_drift(
+    path: tuple[str, str],
+    value: object,
+    expected: str,
+) -> None:
+    plan = load_example()
+    section = plan[path[0]]
+    assert isinstance(section, dict)
+    section[path[1]] = value
+    rehash(plan)
+    assert any(expected in error for error in validate_forge_plan(plan))
+
+
+def test_unknown_fields_are_refused_at_every_public_level() -> None:
+    for section_name in (
+        None,
+        "qmf_contract",
+        "target",
+        "sandbox",
+        "resources",
+        "recipe",
+        "checkpoints",
+        "simulation",
+    ):
+        plan = load_example()
+        target = plan if section_name is None else plan[section_name]
+        assert isinstance(target, dict)
+        target["surprise"] = True
+        rehash(plan)
+        assert any("unknown fields" in error for error in validate_forge_plan(plan))
+
+
+def test_plan_hash_and_immutable_base_rollback_are_recomputed() -> None:
+    plan = load_example()
+    qmf = plan["qmf_contract"]
+    assert isinstance(qmf, dict)
+    qmf["rollback_artifact_hash"] = "sha256:" + "f" * 64
+    errors = validate_forge_plan(plan)
+    assert "QMF rollback artifact must be the immutable base artifact" in errors
+    assert "plan_hash does not match the canonical plan body" in errors
+
+
+def test_physical_memory_domains_cannot_be_aggregated_or_aliased() -> None:
+    plan = load_example()
+    resources = plan["resources"]
+    assert isinstance(resources, dict)
+    domains = resources["memory_domains"]
+    assert isinstance(domains, list)
+    domains[1]["kind"] = "gpu-vram"
+    domains[1]["id"] = domains[0]["id"]
+    resources["max_peak_device_bytes"] = 100 * 1024**3
+    rehash(plan)
+    errors = validate_forge_plan(plan)
+    assert any("identifiers must be unique" in error for error in errors)
+    assert any("cannot aggregate or alias" in error for error in errors)
+    assert any("device_bytes exceeds" in error for error in errors)
+
+
+def test_simulation_emits_verifiable_non_model_evidence(tmp_path: Path) -> None:
+    receipt = simulate_forge_run(load_example(), artifacts_dir=tmp_path)
+    run_dir = tmp_path / receipt["run_id"]
+    result = verify_forge_run(run_dir / "receipt.json")
+    assert result == {
+        "valid": True,
+        "receipt_path": str((run_dir / "receipt.json").resolve()),
+        "run_id": receipt["run_id"],
+        "evidence_class": "SIMULATED",
+        "qmf_admissible": False,
+        "errors": [],
+    }
+    assert not list(run_dir.rglob("adapter_config.json"))
+    assert not list(run_dir.rglob("adapter_model.safetensors"))
+    candidate = json.loads(
+        (run_dir / "candidate" / "synthetic-candidate.json").read_text(encoding="utf-8")
+    )
+    assert candidate["not_a_model"] is True
+    assert candidate["not_a_peft_adapter"] is True
+    assert candidate["qmf_admissible"] is False
+
+
+def test_simulation_refuses_to_overwrite_an_existing_run(tmp_path: Path) -> None:
+    plan = load_example()
+    simulate_forge_run(plan, artifacts_dir=tmp_path)
+    with pytest.raises(ForgePlanError, match="already exists"):
+        simulate_forge_run(plan, artifacts_dir=tmp_path)
+
+
+def test_checkpoint_tampering_breaks_verification(tmp_path: Path) -> None:
+    receipt = simulate_forge_run(load_example(), artifacts_dir=tmp_path)
+    run_dir = tmp_path / receipt["run_id"]
+    checkpoint_path = run_dir / "checkpoints" / "step-000002.json"
+    checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+    checkpoint["synthetic_loss_millionths"] -= 1
+    checkpoint_path.write_text(json.dumps(checkpoint), encoding="utf-8")
+    result = verify_forge_run(run_dir / "receipt.json")
+    assert result["valid"] is False
+    assert any("checkpoint 2 hash is invalid" in error for error in result["errors"])
+
+
+def test_telemetry_tampering_breaks_verification(tmp_path: Path) -> None:
+    receipt = simulate_forge_run(load_example(), artifacts_dir=tmp_path)
+    run_dir = tmp_path / receipt["run_id"]
+    telemetry = run_dir / "telemetry.jsonl"
+    telemetry.write_text(telemetry.read_text(encoding="utf-8") + "{}\n", encoding="utf-8")
+    result = verify_forge_run(run_dir / "receipt.json")
+    assert result["valid"] is False
+    assert "Forge telemetry hash is invalid" in result["errors"]
+
+
+def test_resealed_forged_telemetry_still_fails_semantic_replay(tmp_path: Path) -> None:
+    receipt = simulate_forge_run(load_example(), artifacts_dir=tmp_path)
+    run_dir = tmp_path / receipt["run_id"]
+    telemetry_path = run_dir / "telemetry.jsonl"
+    events = [json.loads(line) for line in telemetry_path.read_text(encoding="utf-8").splitlines()]
+    events[0]["peak_host_bytes"] += 1
+    telemetry_path.write_text(
+        "".join(qmf_canonical_json(event) + "\n" for event in events),
+        encoding="utf-8",
+    )
+    receipt["telemetry_hash"] = prefixed_file_digest(telemetry_path)
+    receipt = seal_record(receipt)
+    (run_dir / "receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
+    result = verify_forge_run(run_dir / "receipt.json")
+    assert result["valid"] is False
+    assert "Forge telemetry failed semantic replay" in result["errors"]
+
+
+def test_probe_requires_exact_dual_unlock_before_device_inspection() -> None:
+    plan = probe_plan()
+    with (
+        patch("oims.model_forge.current_git_commit", return_value="a" * 40),
+        patch("oims.model_forge.subprocess.run") as run,
+    ):
+        result = inspect_physical_preflight(
+            plan,
+            accepted_plan_hash="sha256:" + "0" * 64,
+            environment={},
+        )
+    assert result["lawful"] is False
+    assert result["training_started"] is False
+    assert result["weights_loaded"] is False
+    assert result["qmf_admissible"] is False
+    assert any("accepted plan hash" in error for error in result["errors"])
+    run.assert_not_called()
+
+
+def test_probe_can_prove_a_locked_4090_sandbox_without_training() -> None:
+    plan = probe_plan()
+    environment = {
+        "OIMS_FORGE_ENABLE_PROBE": "1",
+        "OIMS_FORGE_CONTAINER": "1",
+        "HF_HUB_OFFLINE": "1",
+        "TRANSFORMERS_OFFLINE": "1",
+        "HF_DATASETS_OFFLINE": "1",
+        "OIMS_FORGE_BASE_IMAGE": "python:3.12-slim@sha256:" + "a" * 64,
+        "OIMS_FORGE_SOURCE_COMMIT": "a" * 40,
+    }
+    completed = subprocess.CompletedProcess(
+        args=["nvidia-smi"],
+        returncode=0,
+        stdout=(
+            "GPU-00000000-0000-0000-0000-000000000000, NVIDIA GeForce RTX 4090, "
+            "24564, 0, 42, 20, 450\n"
+        ),
+        stderr="",
+    )
+    with (
+        patch(
+            "oims.model_forge._proc_status",
+            return_value={
+                "CapEff": "0000000000000000",
+                "NoNewPrivs": "1",
+                "Seccomp": "2",
+            },
+        ),
+        patch(
+            "oims.model_forge._memory_info",
+            return_value={"MemTotal": 128 * 1024**3, "SwapTotal": 0, "SwapFree": 0},
+        ),
+        patch("oims.model_forge._root_is_read_only", return_value=True),
+        patch("oims.model_forge._default_route_present", return_value=False),
+        patch("oims.model_forge._network_interfaces", return_value={"lo"}),
+        patch(
+            "oims.model_forge._forge_mount_policy",
+            return_value={
+                "plan_read_only": True,
+                "base_model_read_only": True,
+                "dataset_read_only": True,
+                "output_writable": True,
+                "tmpfs_active": True,
+            },
+        ),
+        patch(
+            "oims.model_forge._cgroup_limits",
+            return_value={
+                "memory_limit_bytes": 120 * 1024**3,
+                "swap_limit_bytes": 0,
+                "pids_limit": 512,
+            },
+        ),
+        patch("oims.model_forge.os.geteuid", return_value=65532),
+        patch("oims.model_forge.current_git_commit", return_value="a" * 40),
+        patch("oims.model_forge.subprocess.run", return_value=completed) as run,
+    ):
+        result = inspect_physical_preflight(
+            plan,
+            accepted_plan_hash=plan["plan_hash"],
+            environment=environment,
+        )
+    assert result["lawful"] is True
+    assert result["status"] == "READY"
+    assert result["gpu"]["name"] == "NVIDIA GeForce RTX 4090"
+    assert result["training_started"] is False
+    assert result["qmf_admissible"] is False
+    run.assert_called_once()
+
+
+def test_malformed_plan_root_never_raises_from_public_validator() -> None:
+    malformed_values = [None, [], "plan", 1, True, {"schema_version": object()}]
+    for value in malformed_values:
+        errors = validate_forge_plan(value)
+        assert errors
+
+
+def test_probe_mode_refuses_simulation_payload() -> None:
+    plan = load_example()
+    plan["mode"] = "probe"
+    plan["evidence_class"] = "PHYSICAL_PREFLIGHT"
+    rehash(plan)
+    assert "simulation must be null for physical preflight mode" in validate_forge_plan(plan)
+
+
+def test_recipe_preserves_reviewed_gpt_oss_moe_targets() -> None:
+    plan = load_example()
+    recipe = plan["recipe"]
+    assert isinstance(recipe, dict)
+    parameters = recipe["target_parameters"]
+    assert isinstance(parameters, list)
+    assert parameters == sorted(parameters)
+    assert {value.split(".", 1)[0] for value in parameters} == {"7", "15", "23"}
+    assert recipe["target_modules"] == ["all-linear"]
+    assert recipe["merge_adapter"] is False
+    assert parameters == EXPECTED_TARGET_PARAMETERS
+
+    recipe["target_parameters"] = ["0.mlp.experts.down_proj"]
+    rehash(plan)
+    assert any("GPT-OSS MoE binding" in error for error in validate_forge_plan(plan))
+
+
+def test_simulation_duration_output_and_checkpoint_budgets_are_enforced() -> None:
+    plan = load_example()
+    resources = plan["resources"]
+    checkpoints = plan["checkpoints"]
+    assert isinstance(resources, dict)
+    assert isinstance(checkpoints, dict)
+    resources["max_duration_seconds"] = 1
+    resources["max_output_bytes"] = 1
+    checkpoints["interval_steps"] = 2
+    checkpoints["retain_last"] = 1
+    rehash(plan)
+    errors = validate_forge_plan(plan)
+    assert "simulation duration exceeds the resource budget" in errors
+    assert "simulation output bytes exceed the resource budget" in errors
+    assert "simulation checkpoints.interval_steps must be 1" in errors
+    assert "simulation checkpoints.retain_last must preserve the full chain" in errors
+
+
+def test_plan_loader_refuses_duplicate_fields_and_non_finite_numbers(tmp_path: Path) -> None:
+    duplicate = tmp_path / "duplicate.json"
+    duplicate.write_text('{"schema_version":"1.0.0","schema_version":"1.0.0"}', encoding="utf-8")
+    with pytest.raises(ForgePlanError, match="duplicate JSON field"):
+        load_forge_plan(duplicate)
+
+    non_finite = tmp_path / "non-finite.json"
+    non_finite.write_text('{"value":NaN}', encoding="utf-8")
+    with pytest.raises(ForgePlanError, match="non-finite JSON number"):
+        load_forge_plan(non_finite)
+
+
+def test_container_execution_requires_offline_flags_and_immutable_base_image() -> None:
+    errors = forge_container_environment_errors(
+        {
+            "OIMS_FORGE_CONTAINER": "1",
+            "HF_HUB_OFFLINE": "1",
+            "TRANSFORMERS_OFFLINE": "1",
+            "HF_DATASETS_OFFLINE": "1",
+            "OIMS_FORGE_BASE_IMAGE": "python:latest",
+            "OIMS_FORGE_SOURCE_COMMIT": "a" * 40,
+        }
+    )
+    assert errors == ("OIMS_FORGE_BASE_IMAGE is not pinned by an immutable SHA-256 digest",)
+
+
+def test_oci_boundary_is_offline_unprivileged_and_non_training() -> None:
+    compose = yaml.safe_load((ROOT / "forge" / "compose.yaml").read_text(encoding="utf-8"))
+    for service_name in ("simulate", "probe"):
+        service = compose["services"][service_name]
+        assert service["network_mode"] == "none"
+        assert service["read_only"] is True
+        assert service["cap_drop"] == ["ALL"]
+        assert "no-new-privileges:true" in service["security_opt"]
+        assert service["mem_limit"] == service["memswap_limit"]
+        assert service["environment"]["OIMS_FORGE_BASE_IMAGE"].startswith("${FORGE_BASE_IMAGE:")
+        assert service["environment"]["OIMS_FORGE_SOURCE_COMMIT"].startswith(
+            "${FORGE_SOURCE_COMMIT:"
+        )
+        assert all(
+            volume.get("read_only") is True
+            for volume in service["volumes"]
+            if volume["target"] != "/forge/output"
+        )
+        command = " ".join(str(item) for item in service["command"])
+        assert " train " not in f" {command} "
+        assert command.startswith(("forge simulate", "forge probe"))
+
+    probe = compose["services"]["probe"]
+    device = probe["deploy"]["resources"]["reservations"]["devices"][0]
+    assert device["capabilities"] == ["gpu"]
+    assert device["device_ids"] == ["${FORGE_GPU_DEVICE_ID:-0}"]
+
+    containerfile = (ROOT / "forge" / "Containerfile").read_text(encoding="utf-8")
+    assert "ARG FORGE_BASE_IMAGE\nFROM ${FORGE_BASE_IMAGE}" in containerfile
+    assert "FROM python:" not in containerfile
+    runtime_lock = (ROOT / "requirements" / "forge-runtime.lock").read_text(encoding="utf-8")
+    assert "torch" not in runtime_lock.lower()
+    assert "transformers" not in runtime_lock.lower()
+    assert "peft" not in runtime_lock.lower()
+
+
+def test_forge_receipt_schemas_refuse_undeclared_fields_and_match_runtime(tmp_path: Path) -> None:
+    run_schema = json.loads(
+        (ROOT / "schemas" / "model-forge-run-receipt.schema.json").read_text(encoding="utf-8")
+    )
+    run_receipt = simulate_forge_run(load_example(), artifacts_dir=tmp_path)
+    assert run_schema["additionalProperties"] is False
+    assert set(run_schema["required"]) == set(run_schema["properties"])
+    assert set(run_receipt) == set(run_schema["properties"])
+
+    preflight_schema = json.loads(
+        (ROOT / "schemas" / "model-forge-preflight-receipt.schema.json").read_text(encoding="utf-8")
+    )
+    plan = probe_plan()
+    with patch("oims.model_forge.current_git_commit", return_value="a" * 40):
+        preflight_receipt = inspect_physical_preflight(
+            plan,
+            accepted_plan_hash="sha256:" + "0" * 64,
+            environment={},
+        )
+    assert preflight_schema["additionalProperties"] is False
+    assert set(preflight_schema["required"]) == set(preflight_schema["properties"])
+    assert set(preflight_receipt) == set(preflight_schema["properties"])
