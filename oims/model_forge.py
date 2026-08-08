@@ -1669,6 +1669,14 @@ def _cgroup_limits() -> dict[str, int | None]:
     }
 
 
+def _scaled_nvidia_measurement(value: str, scale: int) -> int:
+    parsed = float(value)
+    scaled = parsed * scale
+    if parsed < 0 or not math.isfinite(parsed) or not math.isfinite(scaled):
+        raise ValueError("NVIDIA measurement is negative, non-finite, or overflowed")
+    return int(scaled)
+
+
 def inspect_physical_preflight(
     plan: object,
     *,
@@ -1798,12 +1806,12 @@ def inspect_physical_preflight(
                 errors.append("nvidia-smi returned an unexpected field count")
             else:
                 try:
-                    total_bytes = int(float(fields[2]) * 1024 * 1024)
-                    used_bytes = int(float(fields[3]) * 1024 * 1024)
-                    temperature = int(float(fields[4]) * 1000)
-                    power_milliwatts = int(float(fields[5]) * 1000)
-                    power_limit_milliwatts = int(float(fields[6]) * 1000)
-                except ValueError:
+                    total_bytes = _scaled_nvidia_measurement(fields[2], 1024 * 1024)
+                    used_bytes = _scaled_nvidia_measurement(fields[3], 1024 * 1024)
+                    temperature = _scaled_nvidia_measurement(fields[4], 1000)
+                    power_milliwatts = _scaled_nvidia_measurement(fields[5], 1000)
+                    power_limit_milliwatts = _scaled_nvidia_measurement(fields[6], 1000)
+                except (OverflowError, ValueError):
                     errors.append("nvidia-smi returned malformed numeric evidence")
                 else:
                     gpu = {

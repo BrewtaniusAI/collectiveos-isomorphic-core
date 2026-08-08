@@ -424,7 +424,14 @@ def test_refused_probe_omits_unverified_source_provenance() -> None:
     assert result["source_tree"] is None
 
 
-def test_probe_can_prove_a_locked_4090_sandbox_without_training() -> None:
+@pytest.mark.parametrize(
+    ("reported_total_memory", "expected_status"),
+    [("24564", "READY"), ("1e999", "REFUSED")],
+)
+def test_probe_can_prove_a_locked_4090_sandbox_without_training(
+    reported_total_memory: str,
+    expected_status: str,
+) -> None:
     plan = probe_plan()
     environment = {
         "OIMS_FORGE_ENABLE_PROBE": "1",
@@ -441,7 +448,7 @@ def test_probe_can_prove_a_locked_4090_sandbox_without_training() -> None:
         returncode=0,
         stdout=(
             "GPU-00000000-0000-0000-0000-000000000000, NVIDIA GeForce RTX 4090, "
-            "24564, 0, 42, 20, 450\n"
+            f"{reported_total_memory}, 0, 42, 20, 450\n"
         ),
         stderr="",
     )
@@ -496,9 +503,13 @@ def test_probe_can_prove_a_locked_4090_sandbox_without_training() -> None:
             accepted_plan_hash=plan["plan_hash"],
             environment=environment,
         )
-    assert result["lawful"] is True
-    assert result["status"] == "READY"
-    assert result["gpu"]["name"] == "NVIDIA GeForce RTX 4090"
+    assert result["status"] == expected_status
+    assert result["lawful"] is (expected_status == "READY")
+    if expected_status == "READY":
+        assert result["gpu"]["name"] == "NVIDIA GeForce RTX 4090"
+    else:
+        assert result["gpu"] is None
+        assert "nvidia-smi returned malformed numeric evidence" in result["errors"]
     assert result["sandbox_observation"]["host_memory_available_bytes"] == 121 * 1024**3
     assert result["training_started"] is False
     assert result["qmf_admissible"] is False
