@@ -501,7 +501,9 @@ def _direct_source_bytecode_is_trusted(package_root: Path | None = None) -> bool
                 dont_inherit=True,
                 optimize=int(optimization.group(1)) if optimization else 0,
             )
-            if marshal.dumps(expected) != bytecode[16:]:
+            # CodeType equality compares executable structure recursively without depending on
+            # marshal reference-table ordering, which differs across supported Python versions.
+            if expected != code:
                 return False
     except (EOFError, OSError, RuntimeError, SyntaxError, TypeError, UnicodeError, ValueError):
         return False
