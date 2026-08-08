@@ -66,6 +66,26 @@ def test_checked_in_probe_plan_is_exact_and_non_training() -> None:
     assert decision["qmf_admissible"] is False
 
 
+def test_plan_decision_omits_unverified_source_provenance() -> None:
+    dirty = subprocess.CompletedProcess(
+        args=["git", "status"],
+        returncode=0,
+        stdout=" M oims/model_forge.py\n",
+        stderr="",
+    )
+    with (
+        patch.dict(
+            "oims.model_forge.os.environ",
+            {"OIMS_FORGE_SOURCE_COMMIT": "a" * 40},
+            clear=True,
+        ),
+        patch("oims.model_forge.subprocess.run", return_value=dirty),
+    ):
+        decision = forge_plan_decision(load_example())
+    assert decision["lawful"] is True
+    assert decision["source_commit"] is None
+
+
 @pytest.mark.parametrize(
     ("path", "value", "expected"),
     [
@@ -257,6 +277,18 @@ def test_non_finite_exponent_artifacts_fail_closed(
     result = verify_forge_run(run_dir / "receipt.json")
     assert result["valid"] is False
     assert any("non-finite JSON number: 1e999" in error for error in result["errors"])
+
+
+def test_candidate_parent_symlink_loop_fails_closed(tmp_path: Path) -> None:
+    receipt = simulate_forge_run(load_example(), artifacts_dir=tmp_path)
+    candidate_dir = tmp_path / receipt["run_id"] / "candidate"
+    candidate_file = candidate_dir / "synthetic-candidate.json"
+    candidate_file.unlink()
+    candidate_dir.rmdir()
+    candidate_dir.symlink_to("candidate", target_is_directory=True)
+    result = verify_forge_run(tmp_path / receipt["run_id"] / "receipt.json")
+    assert result["valid"] is False
+    assert any("cannot resolve Forge candidate path" in error for error in result["errors"])
 
 
 @pytest.mark.parametrize("field", ["source_commit", "source_tree"])

@@ -438,12 +438,6 @@ def forge_container_environment_errors(
     return tuple(errors)
 
 
-def _forge_source_commit(environment: dict[str, str] | None = None) -> str | None:
-    env = environment if environment is not None else dict(os.environ)
-    injected = env.get("OIMS_FORGE_SOURCE_COMMIT")
-    return injected if _is_revision(injected) else current_git_commit(ROOT)
-
-
 def _verified_execution_source(
     environment: dict[str, str] | None = None,
 ) -> tuple[str, str] | None:
@@ -891,6 +885,7 @@ def validate_forge_plan(plan: object) -> tuple[str, ...]:
 
 def forge_plan_decision(plan: object) -> dict[str, Any]:
     errors = validate_forge_plan(plan)
+    provenance = _verified_execution_source()
     plan_hash = plan.get("plan_hash") if isinstance(plan, dict) else None
     mode = plan.get("mode") if isinstance(plan, dict) else None
     evidence_class = plan.get("evidence_class") if isinstance(plan, dict) else None
@@ -907,7 +902,7 @@ def forge_plan_decision(plan: object) -> dict[str, Any]:
         "qmf_admissible": False,
         "governance_route": GOVERNANCE_ROUTE,
         "errors": list(errors),
-        "source_commit": _forge_source_commit(),
+        "source_commit": provenance[0] if provenance is not None else None,
     }
     return seal_record(record)
 
@@ -1126,6 +1121,23 @@ def _load_json_object(
     return value
 
 
+def _resolve_run_artifact(
+    path: Path,
+    run_dir: Path,
+    *,
+    parent_levels: int = 1,
+) -> tuple[bool, str | None]:
+    try:
+        if path.is_symlink():
+            return False, None
+        resolved = path.resolve()
+    except (OSError, RuntimeError) as exc:
+        return False, str(exc)
+    for _ in range(parent_levels):
+        resolved = resolved.parent
+    return resolved == run_dir, None
+
+
 def verify_forge_run(receipt_path: Path | str) -> dict[str, Any]:
     try:
         path = Path(receipt_path).resolve()
@@ -1225,7 +1237,13 @@ def verify_forge_run(receipt_path: Path | str) -> dict[str, Any]:
 
     telemetry_path = run_dir / "telemetry.jsonl"
     telemetry_bytes: bytes | None = None
-    if telemetry_path.is_symlink() or telemetry_path.resolve().parent != run_dir.resolve():
+    telemetry_in_run, telemetry_resolution_error = _resolve_run_artifact(
+        telemetry_path,
+        run_dir,
+    )
+    if telemetry_resolution_error is not None:
+        errors.append(f"cannot resolve Forge telemetry path: {telemetry_resolution_error}")
+    elif not telemetry_in_run:
         errors.append("Forge telemetry path escaped the run directory")
     elif not telemetry_path.is_file():
         errors.append("Forge telemetry file is missing")
@@ -1268,11 +1286,14 @@ def verify_forge_run(receipt_path: Path | str) -> dict[str, Any]:
             errors.append("Forge telemetry failed semantic replay")
 
     checkpoint_dir = run_dir / "checkpoints"
-    if (
-        checkpoint_dir.is_symlink()
-        or checkpoint_dir.resolve().parent != run_dir.resolve()
-        or not checkpoint_dir.is_dir()
-    ):
+    checkpoint_in_run, checkpoint_resolution_error = _resolve_run_artifact(
+        checkpoint_dir,
+        run_dir,
+    )
+    if checkpoint_resolution_error is not None:
+        errors.append(f"cannot resolve Forge checkpoint directory: {checkpoint_resolution_error}")
+        checkpoints = []
+    elif not checkpoint_in_run or not checkpoint_dir.is_dir():
         errors.append("Forge checkpoint directory is invalid")
         checkpoints: list[Path] = []
     else:
@@ -1328,7 +1349,14 @@ def verify_forge_run(receipt_path: Path | str) -> dict[str, Any]:
         errors.append("Forge checkpoint chain head is invalid")
 
     candidate_path = run_dir / "candidate" / "synthetic-candidate.json"
-    if candidate_path.is_symlink() or candidate_path.resolve().parent.parent != run_dir.resolve():
+    candidate_in_run, candidate_resolution_error = _resolve_run_artifact(
+        candidate_path,
+        run_dir,
+        parent_levels=2,
+    )
+    if candidate_resolution_error is not None:
+        errors.append(f"cannot resolve Forge candidate path: {candidate_resolution_error}")
+    elif not candidate_in_run:
         errors.append("Forge candidate path escaped the run directory")
     elif not candidate_path.is_file():
         errors.append("Forge synthetic candidate is missing")
