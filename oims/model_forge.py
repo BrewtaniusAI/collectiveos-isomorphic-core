@@ -21,6 +21,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
+import shutil
 import subprocess
 import tempfile
 from datetime import datetime, timedelta
@@ -39,6 +41,10 @@ MAX_SIMULATION_STEPS = 4096
 MAX_FORGE_OUTPUT_BYTES = 64 * 1024 * 1024
 DEFAULT_FORGE_ARTIFACTS_DIR = ROOT / "artifacts" / "model-forge"
 SOURCE_ATTESTATION_PATH = Path("/usr/local/share/oims-forge/source.attestation")
+RFC3339_TIMESTAMP = re.compile(
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}"
+    r"(?:\.[0-9]+)?(?:[Zz]|[+-][0-9]{2}:[0-9]{2})$"
+)
 GPT_OSS_20B_REPOSITORY = "openai/gpt-oss-20b"
 GPT_OSS_20B_REVISION = "6cee5e81ee83917806bbde320786a8fb61efebee"
 QMF_DIGEST_LENGTH = 71
@@ -508,10 +514,11 @@ def _strict_json_loads(text: str) -> object:
 
 
 def _parse_timestamp(value: object) -> datetime | None:
-    if not isinstance(value, str):
+    if not isinstance(value, str) or RFC3339_TIMESTAMP.fullmatch(value) is None:
         return None
+    normalized = value[:-1] + "+00:00" if value.endswith(("Z", "z")) else value
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(normalized)
     except ValueError:
         return None
     return parsed if parsed.tzinfo is not None and parsed.utcoffset() is not None else None
@@ -1047,16 +1054,38 @@ def simulate_forge_run(
         raise ForgePlanError("serialized Forge evidence exceeds the output byte budget")
 
     run_dir = _safe_run_directory(artifacts_dir, run_id)
-    checkpoint_dir = run_dir / "checkpoints"
-    candidate_dir = run_dir / "candidate"
-    checkpoint_dir.mkdir(parents=True)
-    candidate_dir.mkdir(parents=True)
-    atomic_write_json(run_dir / "plan.json", plan)
-    for step, checkpoint in enumerate(checkpoints, start=1):
-        atomic_write_json(checkpoint_dir / f"step-{step:06d}.json", checkpoint)
-    _atomic_write_text(run_dir / "telemetry.jsonl", telemetry_bytes.decode("ascii"))
-    atomic_write_json(candidate_dir / "synthetic-candidate.json", candidate)
-    atomic_write_json(run_dir / "receipt.json", sealed)
+    try:
+        run_dir.parent.mkdir(parents=True, exist_ok=True)
+        staging_dir = Path(
+            tempfile.mkdtemp(
+                dir=run_dir.parent,
+                prefix=f".{run_id}.",
+                suffix=".tmp",
+            )
+        )
+    except OSError as exc:
+        raise ForgePlanError(f"cannot stage Forge simulation evidence: {exc}") from exc
+    published = False
+    try:
+        checkpoint_dir = staging_dir / "checkpoints"
+        candidate_dir = staging_dir / "candidate"
+        checkpoint_dir.mkdir()
+        candidate_dir.mkdir()
+        atomic_write_json(staging_dir / "plan.json", plan)
+        for step, checkpoint in enumerate(checkpoints, start=1):
+            atomic_write_json(checkpoint_dir / f"step-{step:06d}.json", checkpoint)
+        _atomic_write_text(staging_dir / "telemetry.jsonl", telemetry_bytes.decode("ascii"))
+        atomic_write_json(candidate_dir / "synthetic-candidate.json", candidate)
+        atomic_write_json(staging_dir / "receipt.json", sealed)
+        staging_dir.rename(run_dir)
+        published = True
+    except OSError as exc:
+        if run_dir.exists():
+            raise ForgePlanError(f"Forge run already exists: {run_dir}") from exc
+        raise ForgePlanError(f"cannot persist Forge simulation evidence: {exc}") from exc
+    finally:
+        if not published:
+            shutil.rmtree(staging_dir, ignore_errors=True)
     return sealed
 
 

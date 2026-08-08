@@ -186,6 +186,18 @@ def test_simulation_refuses_to_overwrite_an_existing_run(tmp_path: Path) -> None
         simulate_forge_run(plan, artifacts_dir=tmp_path)
 
 
+def test_simulation_cleans_staging_directory_after_write_failure(tmp_path: Path) -> None:
+    plan = load_example()
+    with (
+        patch("oims.model_forge.atomic_write_json", side_effect=OSError("disk full")),
+        pytest.raises(ForgePlanError, match="cannot persist Forge simulation evidence"),
+    ):
+        simulate_forge_run(plan, artifacts_dir=tmp_path)
+    assert not list(tmp_path.iterdir())
+    receipt = simulate_forge_run(plan, artifacts_dir=tmp_path)
+    assert (tmp_path / receipt["run_id"] / "receipt.json").is_file()
+
+
 def test_checkpoint_tampering_breaks_verification(tmp_path: Path) -> None:
     receipt = simulate_forge_run(load_example(), artifacts_dir=tmp_path)
     run_dir = tmp_path / receipt["run_id"]
@@ -475,6 +487,24 @@ def test_simulation_refuses_unreplayable_timestamps_before_writing(tmp_path: Pat
     assert not list(tmp_path.iterdir())
 
 
+@pytest.mark.parametrize(
+    "clock_start",
+    [
+        "2026-01-01 00:00:00+00:00",
+        "2026-01-01T00:00:00+00:00:30",
+        "20260101T00:00:00Z",
+        "2026-01-01T00:00:00,5Z",
+    ],
+)
+def test_simulation_clock_requires_exact_rfc3339(clock_start: str) -> None:
+    plan = load_example()
+    simulation = plan["simulation"]
+    assert isinstance(simulation, dict)
+    simulation["clock_start"] = clock_start
+    rehash(plan)
+    assert "simulation.clock_start must be timezone-aware RFC3339" in validate_forge_plan(plan)
+
+
 def test_direct_simulation_refuses_dirty_source_before_writing(tmp_path: Path) -> None:
     dirty = subprocess.CompletedProcess(
         args=["git", "status"],
@@ -689,7 +719,7 @@ def test_probe_cli_turns_receipt_write_failure_into_a_refusal(
     result = {"lawful": False, "status": "REFUSED", "qmf_admissible": False, "errors": []}
     with (
         patch("oims.cli.inspect_physical_preflight", return_value=result),
-        patch("oims.cli.atomic_write_json", side_effect=PermissionError("denied")),
+        patch("oims.cli.atomic_create_json", side_effect=PermissionError("denied")),
     ):
         exit_code = cli_main(
             [
@@ -707,6 +737,33 @@ def test_probe_cli_turns_receipt_write_failure_into_a_refusal(
     assert exit_code == 2
     assert payload["qmf_admissible"] is False
     assert "cannot persist Forge preflight receipt" in payload["errors"][0]
+
+
+def test_probe_cli_never_replaces_an_existing_receipt(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    plan = probe_plan()
+    receipt_path = tmp_path / f"preflight-{plan['plan_hash'][7:23]}.json"
+    receipt_path.write_text("original evidence\n", encoding="utf-8")
+    result = {"lawful": True, "status": "READY", "qmf_admissible": False, "errors": []}
+    with patch("oims.cli.inspect_physical_preflight", return_value=result):
+        exit_code = cli_main(
+            [
+                "forge",
+                "probe",
+                "--plan",
+                str(PROBE_EXAMPLE),
+                "--accept-plan-hash",
+                plan["plan_hash"],
+                "--output",
+                str(tmp_path),
+            ]
+        )
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 2
+    assert "preflight receipt already exists" in payload["errors"][0]
+    assert receipt_path.read_text(encoding="utf-8") == "original evidence\n"
 
 
 def test_recipe_preserves_reviewed_gpt_oss_moe_targets() -> None:

@@ -23,7 +23,7 @@ from .model_forge import (
     simulate_forge_run,
     verify_forge_run,
 )
-from .proof import atomic_write_json
+from .proof import atomic_create_json
 from .runtime import print_json, run_family, run_tier
 from .verify import verify_artifact_file
 from .weights import inspect_tier, pull_weights, selected_tiers
@@ -194,7 +194,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         receipt_path = args.output / (
             f"preflight-{str(plan.get('plan_hash', 'invalid')).removeprefix('sha256:')[:16]}.json"
         )
-        if receipt_path.exists():
+        try:
+            atomic_create_json(receipt_path, result)
+        except FileExistsError:
             print_json(
                 {
                     "status": "REFUSED",
@@ -203,8 +205,6 @@ def main(argv: Sequence[str] | None = None) -> int:
                 }
             )
             return 2
-        try:
-            atomic_write_json(receipt_path, result)
         except OSError as exc:
             print_json(
                 {
