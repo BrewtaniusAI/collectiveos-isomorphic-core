@@ -221,15 +221,20 @@ def test_resealed_receipt_cannot_drop_source_provenance(
     assert f"Forge receipt {field} is invalid" in result["errors"]
 
 
-def test_resealed_receipt_cannot_substitute_an_unrelated_source_tree(tmp_path: Path) -> None:
+def test_resealed_receipt_cannot_substitute_source_provenance(tmp_path: Path) -> None:
     receipt = simulate_forge_run(load_example(), artifacts_dir=tmp_path)
     run_dir = tmp_path / receipt["run_id"]
+    verified_source = (receipt["source_commit"], receipt["source_tree"])
+    receipt["source_commit"] = "e" * 40
     receipt["source_tree"] = "f" * 40
     receipt = seal_record(receipt)
     (run_dir / "receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
-    result = verify_forge_run(run_dir / "receipt.json")
+    with patch("oims.model_forge._verified_execution_source", return_value=verified_source):
+        result = verify_forge_run(run_dir / "receipt.json")
     assert result["valid"] is False
-    assert "Forge receipt source_tree does not match source_commit" in result["errors"]
+    assert (
+        "Forge receipt provenance does not match the verified execution source" in result["errors"]
+    )
 
 
 @pytest.mark.parametrize("field", ["telemetry_file", "checkpoint_directory", "candidate_file"])

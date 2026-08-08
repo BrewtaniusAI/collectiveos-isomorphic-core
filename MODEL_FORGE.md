@@ -77,6 +77,10 @@ python -m oims forge verify `
   --receipt artifacts/model-forge/sim-783d6fd324c9fb78/receipt.json
 ```
 
+Verification must run from the same clean source commit/tree that produced the receipt, or from its
+launcher-built image with the matching fixed attestation. A receipt cannot be relabeled to another
+valid Git commit/tree pair and verified from the original producer source.
+
 The simulation writes no `adapter_config.json` or `adapter_model.safetensors`. Its candidate is
 named `synthetic-candidate.json` and contains explicit `not_a_model`, `not_a_peft_adapter`, and
 `qmf_admissible: false` boundaries. Simulation plans are capped at 4,096 steps and 64 MiB of

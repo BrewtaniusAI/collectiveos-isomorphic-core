@@ -472,24 +472,6 @@ def _verified_execution_source(
     return (commit, tree) if _is_revision(tree) else None
 
 
-def _source_tree_matches_commit(commit: object, tree: object) -> bool:
-    if not _is_revision(commit) or not _is_revision(tree):
-        return False
-    if _read_source_attestation() == (commit, tree):
-        return True
-    try:
-        completed = subprocess.run(
-            ["git", "-C", str(ROOT), "rev-parse", "--verify", f"{commit}^{{tree}}"],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return completed.stdout.strip() == tree
-
-
 def _strict_json_loads(text: str) -> object:
     def pairs_hook(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
         result: dict[str, Any] = {}
@@ -1170,12 +1152,10 @@ def verify_forge_run(receipt_path: Path | str) -> dict[str, Any]:
         errors.append("Forge receipt source_commit is invalid")
     if not _is_revision(source_tree):
         errors.append("Forge receipt source_tree is invalid")
-    if (
-        _is_revision(source_commit)
-        and _is_revision(source_tree)
-        and not _source_tree_matches_commit(source_commit, source_tree)
-    ):
-        errors.append("Forge receipt source_tree does not match source_commit")
+    if _is_revision(source_commit) and _is_revision(source_tree):
+        verified_source = _verified_execution_source()
+        if verified_source != (source_commit, source_tree):
+            errors.append("Forge receipt provenance does not match the verified execution source")
 
     telemetry_path = run_dir / "telemetry.jsonl"
     telemetry_bytes: bytes | None = None
