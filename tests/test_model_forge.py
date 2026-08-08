@@ -262,6 +262,67 @@ def test_checkpoint_tampering_breaks_verification(tmp_path: Path) -> None:
     assert any("checkpoint 2 hash is invalid" in error for error in result["errors"])
 
 
+def test_checkpoint_enumeration_is_bounded_before_parsing(tmp_path: Path) -> None:
+    receipt = simulate_forge_run(load_example(), artifacts_dir=tmp_path)
+    run_dir = tmp_path / receipt["run_id"]
+    checkpoint_dir = run_dir / "checkpoints"
+    existing_count = len(list(checkpoint_dir.iterdir()))
+    for index in range(model_forge_module.MAX_SIMULATION_STEPS + 1 - existing_count):
+        (checkpoint_dir / f"untrusted-{index:06d}.json").touch()
+
+    original_parser = model_forge_module._json_object_from_bytes
+    parsed_labels: list[str] = []
+
+    def recording_parser(payload: bytes, path: Path, label: str) -> dict[str, object]:
+        parsed_labels.append(label)
+        return original_parser(payload, path, label)
+
+    with patch("oims.model_forge._json_object_from_bytes", side_effect=recording_parser):
+        result = verify_forge_run(run_dir / "receipt.json")
+
+    assert result["valid"] is False
+    assert "Forge checkpoint directory exceeds the maximum checkpoint count" in result["errors"]
+    assert not any(label.startswith("Forge checkpoint") for label in parsed_labels)
+
+
+def test_checkpoint_aggregate_bytes_are_admitted_before_parsing(tmp_path: Path) -> None:
+    plan = load_example()
+    simulation = plan["simulation"]
+    resources = plan["resources"]
+    checkpoints = plan["checkpoints"]
+    assert isinstance(simulation, dict)
+    assert isinstance(resources, dict)
+    assert isinstance(checkpoints, dict)
+    simulation["steps"] = 15
+    simulation["synthetic_loss_millionths"] = list(range(900_000, 899_985, -1))
+    resources["max_steps"] = 15
+    checkpoints["retain_last"] = 15
+    rehash(plan)
+    receipt = simulate_forge_run(plan, artifacts_dir=tmp_path)
+    run_dir = tmp_path / receipt["run_id"]
+    checkpoint_dir = run_dir / "checkpoints"
+    for checkpoint_path in checkpoint_dir.iterdir():
+        with checkpoint_path.open("wb") as handle:
+            handle.truncate(800_000)
+
+    original_parser = model_forge_module._json_object_from_bytes
+    parsed_labels: list[str] = []
+
+    def recording_parser(payload: bytes, path: Path, label: str) -> dict[str, object]:
+        parsed_labels.append(label)
+        return original_parser(payload, path, label)
+
+    with patch("oims.model_forge._json_object_from_bytes", side_effect=recording_parser):
+        result = verify_forge_run(run_dir / "receipt.json")
+
+    assert result["valid"] is False
+    assert (
+        "serialized Forge evidence exceeds the output byte budget before parsing"
+        in result["errors"]
+    )
+    assert not any(label.startswith("Forge checkpoint") for label in parsed_labels)
+
+
 def test_telemetry_tampering_breaks_verification(tmp_path: Path) -> None:
     receipt = simulate_forge_run(load_example(), artifacts_dir=tmp_path)
     run_dir = tmp_path / receipt["run_id"]
@@ -1267,7 +1328,7 @@ def test_preimport_entrypoint_rejects_dependency_mounts(tmp_path: Path) -> None:
 
 def test_oci_boundary_is_offline_unprivileged_and_non_training() -> None:
     compose = yaml.safe_load((ROOT / "forge" / "compose.yaml").read_text(encoding="utf-8"))
-    for service_name in ("simulate", "probe"):
+    for service_name in ("simulate", "verify", "probe"):
         service = compose["services"][service_name]
         assert service["network_mode"] == "none"
         assert service["read_only"] is True
@@ -1287,7 +1348,14 @@ def test_oci_boundary_is_offline_unprivileged_and_non_training() -> None:
         )
         command = " ".join(str(item) for item in service["command"])
         assert " train " not in f" {command} "
-        assert command.startswith(("forge simulate", "forge probe"))
+        assert command.startswith(("forge simulate", "forge verify", "forge probe"))
+
+    assert compose["services"]["verify"]["command"] == [
+        "forge",
+        "verify",
+        "--receipt",
+        "${FORGE_RECEIPT:-/forge/output/receipt.json}",
+    ]
 
     probe = compose["services"]["probe"]
     device = probe["deploy"]["resources"]["reservations"]["devices"][0]
@@ -1323,6 +1391,11 @@ def test_oci_boundary_is_offline_unprivileged_and_non_training() -> None:
     assert "Git did not resolve the expected Model Forge worktree" in launcher
     assert "SourceCommit does not match the repository HEAD" in launcher
     assert "$env:FORGE_SOURCE_TREE = $SourceTree" in launcher
+    assert "'Validate', 'Simulate', 'Verify', 'Probe'" in launcher
+    assert "Verify requires -Receipt" in launcher
+    assert "Verify requires Receipt to remain beneath OutputDir" in launcher
+    assert "$env:FORGE_RECEIPT = $ContainerReceipt" in launcher
+    assert "run --rm --build verify" in launcher
     runtime_lock = (ROOT / "requirements" / "forge-runtime.lock").read_text(encoding="utf-8")
     assert "torch" not in runtime_lock.lower()
     assert "transformers" not in runtime_lock.lower()

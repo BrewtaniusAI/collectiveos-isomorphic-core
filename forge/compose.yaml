@@ -57,6 +57,14 @@ services:
       - --output
       - /forge/output
 
+  verify:
+    <<: *forge-common
+    command:
+      - forge
+      - verify
+      - --receipt
+      - ${FORGE_RECEIPT:-/forge/output/receipt.json}
+
   probe:
     <<: *forge-common
     profiles:

@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('Validate', 'Simulate', 'Probe')]
+    [ValidateSet('Validate', 'Simulate', 'Verify', 'Probe')]
     [string]$Mode = 'Simulate',
 
     [Parameter(Mandatory = $true)]
@@ -19,6 +19,7 @@ param(
     [string]$OutputDir,
 
     [string]$AcceptPlanHash,
+    [string]$Receipt,
     [string]$SourceCommit,
     [int]$GpuDeviceId = 0,
     [string]$MemoryLimit = '124g'
@@ -114,6 +115,28 @@ foreach ($Directory in @($BaseModelDir, $DatasetDir, $OutputDir)) {
     }
 }
 
+$ContainerReceipt = $null
+if ($Mode -eq 'Verify') {
+    if (-not $Receipt) {
+        throw 'Verify requires -Receipt pointing to a receipt beneath OutputDir.'
+    }
+    $ReceiptPath = (Resolve-Path -LiteralPath $Receipt).Path
+    if (-not (Test-Path -LiteralPath $ReceiptPath -PathType Leaf)) {
+        throw "Forge receipt does not exist: $ReceiptPath"
+    }
+    $OutputRoot = (Resolve-Path -LiteralPath $OutputDir).Path
+    $RelativeReceipt = [System.IO.Path]::GetRelativePath($OutputRoot, $ReceiptPath)
+    $ParentPrefix = '..' + [System.IO.Path]::DirectorySeparatorChar
+    if (
+        [System.IO.Path]::IsPathRooted($RelativeReceipt) -or
+        $RelativeReceipt -eq '..' -or
+        $RelativeReceipt.StartsWith($ParentPrefix)
+    ) {
+        throw 'Verify requires Receipt to remain beneath OutputDir.'
+    }
+    $ContainerReceipt = '/forge/output/' + $RelativeReceipt.Replace('\', '/')
+}
+
 $ComposePath = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\forge\compose.yaml')).Path
 $EnvironmentNames = @(
     'FORGE_BASE_IMAGE',
@@ -124,6 +147,7 @@ $EnvironmentNames = @(
     'FORGE_BASE_MODEL_DIR',
     'FORGE_DATASET_DIR',
     'FORGE_OUTPUT',
+    'FORGE_RECEIPT',
     'FORGE_GPU_DEVICE_ID',
     'FORGE_MEMORY_LIMIT',
     'FORGE_ACCEPT_PLAN_HASH'
@@ -166,6 +190,9 @@ try {
     $env:FORGE_BASE_MODEL_DIR = (Resolve-Path -LiteralPath $BaseModelDir).Path
     $env:FORGE_DATASET_DIR = (Resolve-Path -LiteralPath $DatasetDir).Path
     $env:FORGE_OUTPUT = (Resolve-Path -LiteralPath $OutputDir).Path
+    if ($ContainerReceipt) {
+        $env:FORGE_RECEIPT = $ContainerReceipt
+    }
     $env:FORGE_GPU_DEVICE_ID = [string]$GpuDeviceId
     $env:FORGE_MEMORY_LIMIT = $MemoryLimit
 
@@ -181,6 +208,9 @@ try {
         }
         'Simulate' {
             & docker compose -f $ComposePath run --rm --build simulate
+        }
+        'Verify' {
+            & docker compose -f $ComposePath run --rm --build verify
         }
         'Probe' {
             if ($AcceptPlanHash -notmatch '^sha256:[0-9a-f]{64}$') {

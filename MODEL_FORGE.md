@@ -98,6 +98,20 @@ though `.git` is excluded from the build context:
   -OutputDir D:\Collective\ProofVault\ModelForge
 ```
 
+Verify the resulting receipt inside the same source-attested image. `-Receipt` must resolve beneath
+`-OutputDir`, which is mounted at `/forge/output` in the isolated verifier:
+
+```powershell
+.\scripts\run_model_forge.ps1 `
+  -Mode Verify `
+  -Plan .\forge\examples\gpt-oss-20b-4090-simulation.plan.json `
+  -BaseImage "python:3.12-slim@sha256:<verified-digest>" `
+  -BaseModelDir D:\Collective\Models\GPT-OSS-20B `
+  -DatasetDir D:\Collective\Datasets\Forge `
+  -OutputDir D:\Collective\ProofVault\ModelForge `
+  -Receipt D:\Collective\ProofVault\ModelForge\sim-783d6fd324c9fb78\receipt.json
+```
+
 The image build may access package indexes to install the small controller dependency set. The
 running container has no network. A physical toolchain lock must later hash the selected base
 image and every downloaded training wheel before the `train` state can be introduced.

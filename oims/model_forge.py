@@ -1152,14 +1152,32 @@ def _load_json_object(
     *,
     max_bytes: int = MAX_RECORD_BYTES,
 ) -> dict[str, Any]:
+    payload = _read_bounded_bytes(path, label, max_bytes=max_bytes)
+    return _json_object_from_bytes(payload, path, label)
+
+
+def _read_bounded_bytes(
+    path: Path,
+    label: str,
+    *,
+    max_bytes: int = MAX_RECORD_BYTES,
+) -> bytes:
     try:
-        size = path.stat().st_size
-        if size > max_bytes:
+        with path.open("rb") as handle:
+            payload = handle.read(max_bytes + 1)
+        if len(payload) > max_bytes:
             raise ForgePlanError(f"{label} exceeds {max_bytes} bytes")
-        value = _strict_json_loads(path.read_text(encoding="utf-8"))
     except ForgePlanError:
         raise
-    except (OSError, UnicodeDecodeError, ValueError) as exc:
+    except OSError as exc:
+        raise ForgePlanError(f"cannot load {label} {path}: {exc}") from exc
+    return payload
+
+
+def _json_object_from_bytes(payload: bytes, path: Path, label: str) -> dict[str, Any]:
+    try:
+        value = _strict_json_loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError) as exc:
         raise ForgePlanError(f"cannot load {label} {path}: {exc}") from exc
     if not isinstance(value, dict):
         raise ForgePlanError(f"{label} root must be an object")
@@ -1331,6 +1349,10 @@ def verify_forge_run(receipt_path: Path | str) -> dict[str, Any]:
             errors.append("Forge telemetry failed semantic replay")
 
     checkpoint_dir = run_dir / "checkpoints"
+    candidate_path = run_dir / "candidate" / "synthetic-candidate.json"
+    checkpoint_enumeration_complete = False
+    checkpoint_entries_regular = True
+    observed_checkpoint_count = 0
     checkpoint_in_run, checkpoint_resolution_error = _resolve_run_artifact(
         checkpoint_dir,
         run_dir,
@@ -1343,21 +1365,93 @@ def verify_forge_run(receipt_path: Path | str) -> dict[str, Any]:
         checkpoints: list[Path] = []
     else:
         try:
-            checkpoints = sorted(checkpoint_dir.iterdir())
+            checkpoints = []
+            with os.scandir(checkpoint_dir) as entries:
+                for observed_checkpoint_count, entry in enumerate(entries, start=1):
+                    if observed_checkpoint_count > MAX_SIMULATION_STEPS:
+                        errors.append(
+                            "Forge checkpoint directory exceeds the maximum checkpoint count"
+                        )
+                        break
+                    checkpoint_path = Path(entry.path)
+                    checkpoints.append(checkpoint_path)
+                    if entry.is_symlink() or not entry.is_file(follow_symlinks=False):
+                        checkpoint_entries_regular = False
+                else:
+                    checkpoint_enumeration_complete = True
         except OSError as exc:
             errors.append(f"cannot enumerate Forge checkpoint directory: {exc}")
             checkpoints = []
         else:
-            if any(path.is_symlink() or not path.is_file() for path in checkpoints):
+            if checkpoint_enumeration_complete:
+                checkpoints.sort()
+            if not checkpoint_entries_regular:
                 errors.append("Forge checkpoint directory contains a non-regular artifact")
-    if receipt.get("checkpoint_count") != len(checkpoints):
+    checkpoint_count_valid = (
+        checkpoint_enumeration_complete
+        and receipt.get("checkpoint_count") == observed_checkpoint_count
+        and (not plan_valid or observed_checkpoint_count == simulation["steps"])
+    )
+    if not checkpoint_count_valid:
         errors.append("Forge checkpoint count is invalid")
+
+    checkpoint_payloads: list[bytes] = []
+    checkpoint_parse_allowed = checkpoint_count_valid and checkpoint_entries_regular
+    fixed_evidence_paths = [
+        path,
+        run_dir / "plan.json",
+        telemetry_path,
+        candidate_path,
+    ]
+    fixed_evidence_bytes: int | None = None
+    if checkpoint_parse_allowed:
+        if any(item.is_symlink() or not item.is_file() for item in fixed_evidence_paths):
+            checkpoint_parse_allowed = False
+        else:
+            try:
+                fixed_evidence_bytes = sum(item.stat().st_size for item in fixed_evidence_paths)
+            except OSError as exc:
+                errors.append(f"cannot meter serialized Forge evidence before parsing: {exc}")
+                checkpoint_parse_allowed = False
+
+    output_byte_limit = MAX_FORGE_OUTPUT_BYTES
+    if plan_valid:
+        output_byte_limit = min(output_byte_limit, plan["resources"]["max_output_bytes"])
+    if fixed_evidence_bytes is not None and fixed_evidence_bytes > output_byte_limit:
+        errors.append("serialized Forge evidence exceeds the output byte budget before parsing")
+        checkpoint_parse_allowed = False
+
+    if checkpoint_parse_allowed and fixed_evidence_bytes is not None:
+        admitted_bytes = fixed_evidence_bytes
+        for position, checkpoint_path in enumerate(checkpoints, start=1):
+            try:
+                payload = _read_bounded_bytes(checkpoint_path, f"Forge checkpoint {position}")
+            except ForgePlanError as exc:
+                errors.append(str(exc))
+                checkpoint_parse_allowed = False
+                break
+            admitted_bytes += len(payload)
+            if admitted_bytes > output_byte_limit:
+                errors.append(
+                    "serialized Forge evidence exceeds the output byte budget before parsing"
+                )
+                checkpoint_parse_allowed = False
+                break
+            checkpoint_payloads.append(payload)
+
     previous: str | None = None
-    for position, checkpoint_path in enumerate(checkpoints, start=1):
+    checkpoint_inputs = (
+        zip(checkpoints, checkpoint_payloads, strict=True) if checkpoint_parse_allowed else ()
+    )
+    for position, (checkpoint_path, checkpoint_payload) in enumerate(checkpoint_inputs, start=1):
         if checkpoint_path.name != f"step-{position:06d}.json":
             errors.append(f"Forge checkpoint {position} filename is invalid")
         try:
-            checkpoint = _load_json_object(checkpoint_path, "Forge checkpoint")
+            checkpoint = _json_object_from_bytes(
+                checkpoint_payload,
+                checkpoint_path,
+                "Forge checkpoint",
+            )
         except ForgePlanError as exc:
             errors.append(str(exc))
             continue
@@ -1393,7 +1487,6 @@ def verify_forge_run(receipt_path: Path | str) -> dict[str, Any]:
     if receipt.get("checkpoint_chain_head") != previous:
         errors.append("Forge checkpoint chain head is invalid")
 
-    candidate_path = run_dir / "candidate" / "synthetic-candidate.json"
     candidate_in_run, candidate_resolution_error = _resolve_run_artifact(
         candidate_path,
         run_dir,
@@ -1437,15 +1530,11 @@ def verify_forge_run(receipt_path: Path | str) -> dict[str, Any]:
                 if candidate != expected_candidate:
                     errors.append("Forge synthetic candidate failed semantic replay")
 
-    metered_paths = [
-        path,
-        run_dir / "plan.json",
-        run_dir / "telemetry.jsonl",
-        run_dir / "candidate" / "synthetic-candidate.json",
-        *checkpoints,
-    ]
     actual_output_bytes: int | None = None
-    if any(item.is_symlink() or not item.is_file() for item in metered_paths):
+    metered_paths = [*fixed_evidence_paths, *checkpoints]
+    if not checkpoint_enumeration_complete:
+        actual_output_bytes = None
+    elif any(item.is_symlink() or not item.is_file() for item in metered_paths):
         errors.append("serialized Forge evidence contains a non-regular artifact")
     else:
         try:
