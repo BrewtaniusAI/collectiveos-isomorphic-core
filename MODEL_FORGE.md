@@ -81,6 +81,19 @@ Completed run directories are published with Linux atomic no-replace rename sema
 concurrently created destination is preserved. Receipt replay explicitly requires a validated
 `simulate` plan before any plan-derived semantic checks can be considered satisfied.
 
+Forge evidence schema 1.1 adds typed `constraint_signals` to plan decisions, simulations, and
+physical-preflight receipts. Every signal records a canonical identifier, constraint type, evidence
+source, validation method, satisfied status, and a digest of that exact signal body. Signals are
+uniquely sorted and their complete set is hash-bound into `proof_vault` metadata. Semantic replay
+reconstructs the expected simulation signals, so a structurally valid and resealed substitution is
+still refused.
+
+The `proof_vault` object is metadata, not a storage claim. It always records `NOT_APPENDED`,
+`worm_write_performed: false`, `external_anchor: null`, and `promotion_eligible: false` in this
+repository. An external owner-approved WORM destination remains a separate authority boundary.
+Neither a receipt seal nor a Constraint Signal digest may be relabeled as an external Proof Vault
+anchor.
+
 ## OCI / WSL2 environment
 
 The Compose environment is hardened independently of the Python validator:
@@ -130,7 +143,7 @@ Verify the resulting receipt inside the same source-attested image. `-Receipt` m
   -BaseModelDir D:\Collective\Models\GPT-OSS-20B `
   -DatasetDir D:\Collective\Datasets\Forge `
   -OutputDir D:\Collective\ProofVault\ModelForge `
-  -Receipt D:\Collective\ProofVault\ModelForge\sim-783d6fd324c9fb78\receipt.json
+  -Receipt D:\Collective\ProofVault\ModelForge\sim-8d6753e4990923ed\receipt.json
 ```
 
 The image build may access package indexes to install the small controller dependency set. The
@@ -231,7 +244,7 @@ sets `capabilities: [gpu]` and an explicit device ID. See
     available VRAM, and temperature headroom for the plan ceilings.
 
 The checked-in probe plan hash is
-`sha256:a7d8598120a94de263af8f3d2de54e5be0da4142c10c8aeef4d1467e8266f4b6`. Run it
+`sha256:566b33b809d2051e5009cf0810f1a941a00b472ae2b55eb7ea8fc98821998754`. Run it
 through the same launcher paths used above:
 
 ```powershell
@@ -242,7 +255,7 @@ through the same launcher paths used above:
   -BaseModelDir D:\Collective\Models\GPT-OSS-20B `
   -DatasetDir D:\Collective\Datasets\Forge `
   -OutputDir D:\Collective\ProofVault\ModelForge `
-  -AcceptPlanHash "sha256:a7d8598120a94de263af8f3d2de54e5be0da4142c10c8aeef4d1467e8266f4b6"
+  -AcceptPlanHash "sha256:566b33b809d2051e5009cf0810f1a941a00b472ae2b55eb7ea8fc98821998754"
 ```
 
 It records GPU UUID/name, physical VRAM, current allocation, temperature, and power evidence.
@@ -259,6 +272,8 @@ probe only after the real base snapshot and dataset manifest exist.
   code-comment-test curriculum remain plan-level invariants.
 - Duration, steps, tokens, bytes, host/device peaks, energy, cost, temperature, network, and swap
   are hard ceilings.
+- Constraint signals keep VRAM and host-RAM observations separate, identify their evidence source,
+  and expose failed constraints without converting storage capacity into memory evidence.
 - Every checkpoint links to its predecessor, and verification replays the complete chain.
 - FPGA/AIE/NPU acceleration may later produce telemetry or deterministic data-movement evidence,
   but cannot approve a model or amplify authority.

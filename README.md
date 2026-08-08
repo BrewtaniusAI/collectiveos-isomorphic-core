@@ -102,6 +102,10 @@ telemetry/checkpoint chains, and inspect the RTX 4090 sandbox. It cannot yet tra
 publish, serve, or promote a model, and every emitted receipt says whether it is simulated or
 physical preflight evidence.
 
+Forge evidence schema 1.1 also emits typed, hash-linked constraint signals and explicit Proof Vault
+metadata. The metadata proves that no external WORM append, anchor, or promotion occurred; external
+Proof Vault authority remains unconfigured.
+
 ```bash
 python -m oims forge validate \
   --plan forge/examples/gpt-oss-20b-4090-simulation.plan.json

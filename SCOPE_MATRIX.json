@@ -122,10 +122,12 @@
         "forge/examples/gpt-oss-20b-4090-probe.plan.json",
         "scripts/run_model_forge.ps1",
         "schemas/model-forge-plan.schema.json",
+        "schemas/model-forge-constraint-signals.schema.json",
+        "schemas/model-forge-proof-vault-metadata.schema.json",
         "tests/test_model_forge.py",
         "MODEL_FORGE.md"
       ],
-      "acceptance": "Strict QMF-bound plans run only as non-admissible simulation or non-training physical preflight, with offline OCI isolation and replayable telemetry/checkpoint evidence."
+      "acceptance": "Strict QMF-bound plans run only as non-admissible simulation or non-training physical preflight, with offline OCI isolation, replayable telemetry/checkpoint evidence, typed Constraint Signal provenance, and explicit non-appended Proof Vault metadata."
     },
     {
       "id": "target-weight-execution",
@@ -140,7 +142,8 @@
       "id": "proof-vault-worm",
       "status": "pending-external-authority",
       "evidence": [
-        "KNOWN_GAPS.md"
+        "KNOWN_GAPS.md",
+        "schemas/model-forge-proof-vault-metadata.schema.json"
       ],
       "acceptance": "Owner-approved signing identity and WORM destination are configured."
     },

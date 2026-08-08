@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oims.collective-osp.org/schemas/model-forge-constraint-signals-1.0.0.json",
+  "title": "OIMS Model Forge Constraint Signals",
+  "type": "array",
+  "minItems": 1,
+  "maxItems": 64,
+  "uniqueItems": true,
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "signal_id",
+      "constraint_type",
+      "source",
+      "validation_method",
+      "satisfied",
+      "lineage_hash"
+    ],
+    "properties": {
+      "signal_id": {
+        "type": "string",
+        "pattern": "^[a-z][a-z0-9_.-]{2,63}$"
+      },
+      "constraint_type": {
+        "enum": [
+          "authority",
+          "energy",
+          "evidence",
+          "identity",
+          "isolation",
+          "memory",
+          "network",
+          "provenance",
+          "rollback",
+          "thermal"
+        ]
+      },
+      "source": {"type": "string", "minLength": 1, "maxLength": 256},
+      "validation_method": {
+        "enum": [
+          "bounded-measurement",
+          "canonical-hash",
+          "exact-match",
+          "hash-chain",
+          "kernel-observation",
+          "strict-policy"
+        ]
+      },
+      "satisfied": {"type": "boolean"},
+      "lineage_hash": {
+        "type": "string",
+        "pattern": "^sha256:[0-9a-f]{64}$"
+      }
+    }
+  }
+}

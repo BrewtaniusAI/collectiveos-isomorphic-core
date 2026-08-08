@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0.0",
+  "schema_version": "1.1.0",
   "plan_id": "gpt-oss-20b-collective-coder-4090-probe-v1",
   "mode": "probe",
   "evidence_class": "PHYSICAL_PREFLIGHT",
@@ -103,5 +103,5 @@
     "hash_chain": true
   },
   "simulation": null,
-  "plan_hash": "sha256:a7d8598120a94de263af8f3d2de54e5be0da4142c10c8aeef4d1467e8266f4b6"
+  "plan_hash": "sha256:566b33b809d2051e5009cf0810f1a941a00b472ae2b55eb7ea8fc98821998754"
 }

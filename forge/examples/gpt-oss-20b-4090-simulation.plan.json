@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0.0",
+  "schema_version": "1.1.0",
   "plan_id": "gpt-oss-20b-collective-coder-4090-simulation-v1",
   "mode": "simulate",
   "evidence_class": "SIMULATED",
@@ -119,5 +119,5 @@
       450000
     ]
   },
-  "plan_hash": "sha256:783d6fd324c9fb78d69c903f9f6effddc1bf50a9c6cdb5aa17b719a944c5fce3"
+  "plan_hash": "sha256:8d6753e4990923ed27abbfb0894a96abdafaf88ba02c985767a8738e02b00c7c"
 }
