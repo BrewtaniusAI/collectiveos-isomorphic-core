@@ -1669,12 +1669,15 @@ def _cgroup_limits() -> dict[str, int | None]:
     }
 
 
-def _scaled_nvidia_measurement(value: str, scale: int) -> int:
+def _scaled_nvidia_measurement(value: str, scale: int, *, minimum: int = 0) -> int:
     parsed = float(value)
     scaled = parsed * scale
     if parsed < 0 or not math.isfinite(parsed) or not math.isfinite(scaled):
         raise ValueError("NVIDIA measurement is negative, non-finite, or overflowed")
-    return int(scaled)
+    result = int(scaled)
+    if result < minimum:
+        raise ValueError("NVIDIA measurement is below its schema minimum")
+    return result
 
 
 def inspect_physical_preflight(
@@ -1806,38 +1809,53 @@ def inspect_physical_preflight(
                 errors.append("nvidia-smi returned an unexpected field count")
             else:
                 try:
-                    total_bytes = _scaled_nvidia_measurement(fields[2], 1024 * 1024)
+                    total_bytes = _scaled_nvidia_measurement(
+                        fields[2],
+                        1024 * 1024,
+                        minimum=1,
+                    )
                     used_bytes = _scaled_nvidia_measurement(fields[3], 1024 * 1024)
                     temperature = _scaled_nvidia_measurement(fields[4], 1000)
                     power_milliwatts = _scaled_nvidia_measurement(fields[5], 1000)
-                    power_limit_milliwatts = _scaled_nvidia_measurement(fields[6], 1000)
+                    power_limit_milliwatts = _scaled_nvidia_measurement(
+                        fields[6],
+                        1000,
+                        minimum=1,
+                    )
                 except (OverflowError, ValueError):
                     errors.append("nvidia-smi returned malformed numeric evidence")
                 else:
-                    gpu = {
-                        "uuid": fields[0],
-                        "name": fields[1],
-                        "total_bytes": total_bytes,
-                        "used_bytes": used_bytes,
-                        "temperature_millic": temperature,
-                        "power_milliwatts": power_milliwatts,
-                        "power_limit_milliwatts": power_limit_milliwatts,
-                    }
-                    declared_device_bytes = next(
-                        domain["capacity_bytes"]
-                        for domain in root["resources"]["memory_domains"]
-                        if domain["kind"] == "gpu-vram"
-                    )
-                    if fields[1] != "NVIDIA GeForce RTX 4090":
-                        errors.append("physical GPU identity is not the reviewed RTX 4090 target")
-                    if abs(total_bytes - declared_device_bytes) > 512 * 1024**2:
-                        errors.append(
-                            "physical GPU memory does not match the declared memory domain"
+                    if not fields[0]:
+                        errors.append("nvidia-smi returned an empty device UUID")
+                    elif not fields[1]:
+                        errors.append("nvidia-smi returned an empty device name")
+                    else:
+                        gpu = {
+                            "uuid": fields[0],
+                            "name": fields[1],
+                            "total_bytes": total_bytes,
+                            "used_bytes": used_bytes,
+                            "temperature_millic": temperature,
+                            "power_milliwatts": power_milliwatts,
+                            "power_limit_milliwatts": power_limit_milliwatts,
+                        }
+                        declared_device_bytes = next(
+                            domain["capacity_bytes"]
+                            for domain in root["resources"]["memory_domains"]
+                            if domain["kind"] == "gpu-vram"
                         )
-                    if total_bytes - used_bytes < root["resources"]["max_peak_device_bytes"]:
-                        errors.append("available GPU memory is below the plan's device ceiling")
-                    if temperature > root["resources"]["max_temperature_millic"]:
-                        errors.append("physical GPU temperature exceeds the plan ceiling")
+                        if fields[1] != "NVIDIA GeForce RTX 4090":
+                            errors.append(
+                                "physical GPU identity is not the reviewed RTX 4090 target"
+                            )
+                        if abs(total_bytes - declared_device_bytes) > 512 * 1024**2:
+                            errors.append(
+                                "physical GPU memory does not match the declared memory domain"
+                            )
+                        if total_bytes - used_bytes < root["resources"]["max_peak_device_bytes"]:
+                            errors.append("available GPU memory is below the plan's device ceiling")
+                        if temperature > root["resources"]["max_temperature_millic"]:
+                            errors.append("physical GPU temperature exceeds the plan ceiling")
 
     receipt = {
         "@context": "https://oims.collective-osp.org/model-forge/v1",

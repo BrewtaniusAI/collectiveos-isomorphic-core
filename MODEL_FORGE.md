@@ -130,10 +130,10 @@ imported module is isolated from `/workspace` before using the container provena
 Before importing any project code, an external isolated entrypoint hashes every installed `oims`
 package byte and compares it with a digest sealed into the build attestation; the in-package check
 repeats that comparison as defense in depth. The entrypoint also reads `/proc/self/mountinfo` and
-refuses any mount covering or nested beneath the installed package, attestation, or verifier, so a
-runtime bind cannot replace both evidence and expected digest. Compose refuses a working-tree
-context. This keeps the source recorded in Forge receipts bound to the exact source copied into the
-image.
+refuses any mount covering or nested beneath the interpreter prefix, installed package,
+attestation, or verifier. This protects every imported Python dependency as well as the evidence
+and expected digest. Compose refuses a working-tree context. This keeps the source recorded in
+Forge receipts bound to the exact source copied into the image.
 
 Docker documents GPU reservations through `deploy.resources.reservations.devices`; the Forge
 sets `capabilities: [gpu]` and an explicit device ID. See

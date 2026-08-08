@@ -10,7 +10,7 @@ import pytest
 import yaml
 
 from forge.oims_forge_entrypoint import package_digest as entrypoint_package_digest
-from forge.oims_forge_entrypoint import verify_installed_package
+from forge.oims_forge_entrypoint import protected_mount_errors, verify_installed_package
 from oims.cli import main as cli_main
 from oims.manifest import ROOT
 from oims.model_forge import (
@@ -425,12 +425,57 @@ def test_refused_probe_omits_unverified_source_provenance() -> None:
 
 
 @pytest.mark.parametrize(
-    ("reported_total_memory", "expected_status"),
-    [("24564", "READY"), ("1e999", "REFUSED")],
+    (
+        "reported_uuid",
+        "reported_name",
+        "reported_total_memory",
+        "reported_power_limit",
+        "expected_error",
+    ),
+    [
+        (
+            "GPU-00000000-0000-0000-0000-000000000000",
+            "NVIDIA GeForce RTX 4090",
+            "24564",
+            "450",
+            None,
+        ),
+        (
+            "GPU-00000000-0000-0000-0000-000000000000",
+            "NVIDIA GeForce RTX 4090",
+            "1e999",
+            "450",
+            "nvidia-smi returned malformed numeric evidence",
+        ),
+        (
+            "",
+            "NVIDIA GeForce RTX 4090",
+            "24564",
+            "450",
+            "nvidia-smi returned an empty device UUID",
+        ),
+        (
+            "GPU-00000000-0000-0000-0000-000000000000",
+            "",
+            "24564",
+            "450",
+            "nvidia-smi returned an empty device name",
+        ),
+        (
+            "GPU-00000000-0000-0000-0000-000000000000",
+            "NVIDIA GeForce RTX 4090",
+            "24564",
+            "0",
+            "nvidia-smi returned malformed numeric evidence",
+        ),
+    ],
 )
 def test_probe_can_prove_a_locked_4090_sandbox_without_training(
+    reported_uuid: str,
+    reported_name: str,
     reported_total_memory: str,
-    expected_status: str,
+    reported_power_limit: str,
+    expected_error: str | None,
 ) -> None:
     plan = probe_plan()
     environment = {
@@ -447,8 +492,8 @@ def test_probe_can_prove_a_locked_4090_sandbox_without_training(
         args=["nvidia-smi"],
         returncode=0,
         stdout=(
-            "GPU-00000000-0000-0000-0000-000000000000, NVIDIA GeForce RTX 4090, "
-            f"{reported_total_memory}, 0, 42, 20, 450\n"
+            f"{reported_uuid}, {reported_name}, "
+            f"{reported_total_memory}, 0, 42, 20, {reported_power_limit}\n"
         ),
         stderr="",
     )
@@ -503,13 +548,13 @@ def test_probe_can_prove_a_locked_4090_sandbox_without_training(
             accepted_plan_hash=plan["plan_hash"],
             environment=environment,
         )
-    assert result["status"] == expected_status
-    assert result["lawful"] is (expected_status == "READY")
-    if expected_status == "READY":
+    assert result["status"] == ("READY" if expected_error is None else "REFUSED")
+    assert result["lawful"] is (expected_error is None)
+    if expected_error is None:
         assert result["gpu"]["name"] == "NVIDIA GeForce RTX 4090"
     else:
         assert result["gpu"] is None
-        assert "nvidia-smi returned malformed numeric evidence" in result["errors"]
+        assert expected_error in result["errors"]
     assert result["sandbox_observation"]["host_memory_available_bytes"] == 121 * 1024**3
     assert result["training_started"] is False
     assert result["qmf_admissible"] is False
@@ -1095,6 +1140,29 @@ def test_preimport_entrypoint_rejects_matching_replacement_mounts(tmp_path: Path
         package_root,
         (Path("/"), package_file, attestation),
     ) == ("Forge protected source paths contain an unexpected runtime mount",)
+
+
+def test_preimport_entrypoint_rejects_dependency_mounts(tmp_path: Path) -> None:
+    interpreter_prefix = tmp_path / "python"
+    site_packages = interpreter_prefix / "lib" / "site-packages"
+    package_root = site_packages / "oims"
+    dependency_root = site_packages / "yaml"
+    package_root.mkdir(parents=True)
+    dependency_root.mkdir()
+    attestation = interpreter_prefix / "share" / "source.attestation"
+    attestation.parent.mkdir()
+    attestation.write_text("attestation\n", encoding="ascii")
+    verifier = interpreter_prefix / "libexec" / "entrypoint.py"
+    verifier.parent.mkdir()
+    verifier.write_text("verifier\n", encoding="utf-8")
+    errors = protected_mount_errors(
+        package_root,
+        attestation,
+        verifier,
+        (Path("/"), dependency_root),
+        interpreter_prefix,
+    )
+    assert errors == ("Forge protected source paths contain an unexpected runtime mount",)
 
 
 def test_oci_boundary_is_offline_unprivileged_and_non_training() -> None:

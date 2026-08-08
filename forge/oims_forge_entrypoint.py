@@ -114,12 +114,14 @@ def protected_mount_errors(
     attestation_path: Path = ATTESTATION_PATH,
     verifier_path: Path | None = None,
     observed_mounts: tuple[Path, ...] | None = None,
+    interpreter_prefix: Path | None = None,
 ) -> tuple[str, ...]:
     try:
         protected = (
             package_root.resolve(strict=True),
             attestation_path.resolve(strict=True),
             (verifier_path or Path(__file__)).resolve(strict=True),
+            (interpreter_prefix or Path(sys.prefix)).resolve(strict=True),
         )
     except (OSError, RuntimeError):
         return ("Forge protected source paths cannot be resolved",)
