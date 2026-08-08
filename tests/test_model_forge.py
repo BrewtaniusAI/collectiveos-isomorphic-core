@@ -708,9 +708,7 @@ def test_container_source_shortcut_requires_matching_image_attestation() -> None
         return_value=("c" * 40, "d" * 40),
     ):
         errors = forge_container_environment_errors(environment)
-    assert errors == (
-        "Forge image source attestation does not match the declared commit and tree",
-    )
+    assert errors == ("Forge image source attestation does not match the declared commit and tree",)
 
 
 def test_oci_boundary_is_offline_unprivileged_and_non_training() -> None:
@@ -727,9 +725,7 @@ def test_oci_boundary_is_offline_unprivileged_and_non_training() -> None:
         assert service["environment"]["OIMS_FORGE_SOURCE_COMMIT"].startswith(
             "${FORGE_SOURCE_COMMIT:"
         )
-        assert service["environment"]["OIMS_FORGE_SOURCE_TREE"].startswith(
-            "${FORGE_SOURCE_TREE:"
-        )
+        assert service["environment"]["OIMS_FORGE_SOURCE_TREE"].startswith("${FORGE_SOURCE_TREE:")
         assert all(
             volume.get("read_only") is True
             for volume in service["volumes"]

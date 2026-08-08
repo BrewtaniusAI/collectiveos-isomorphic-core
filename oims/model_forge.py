@@ -303,9 +303,7 @@ def _atomic_write_text(path: Path, text: str) -> None:
 
 
 def _json_artifact_bytes(value: Any) -> bytes:
-    return (
-        json.dumps(value, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
-    ).encode("utf-8")
+    return (json.dumps(value, indent=2, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
 
 
 def _is_int(value: object, *, minimum: int = 0) -> bool:
@@ -949,9 +947,9 @@ def simulate_forge_run(
             }
         )
 
-    telemetry_bytes = "".join(
-        qmf_canonical_json(event) + "\n" for event in telemetry
-    ).encode("ascii")
+    telemetry_bytes = "".join(qmf_canonical_json(event) + "\n" for event in telemetry).encode(
+        "ascii"
+    )
     if len(telemetry_bytes) > MAX_TELEMETRY_BYTES:
         raise ForgePlanError(f"Forge telemetry exceeds {MAX_TELEMETRY_BYTES} bytes")
     candidate_body = {
