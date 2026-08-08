@@ -173,7 +173,8 @@ An NVIDIA file already mapped before verification, a writable or non-regular fil
 runtime-root mount, or any non-NVIDIA executable-runtime mount still fails closed. Compose refuses
 a working-tree context, and the launcher rejects any resolved service, entrypoint, user, build
 context, sandbox setting, or bind mount outside the checked-in four-mount policy before starting
-Python. This keeps source and runtime evidence bound to the exact inspected bytes.
+Python, then executes that exact rendered snapshot from memory rather than reparsing the mutable
+Compose path. This keeps source and runtime evidence bound to the exact inspected bytes.
 
 Docker documents GPU reservations through `deploy.resources.reservations.devices`; the Forge
 sets `capabilities: [gpu]` and an explicit device ID. See

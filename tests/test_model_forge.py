@@ -2345,6 +2345,25 @@ def test_launcher_enforces_process_and_mount_policy_before_container_start() -> 
         assert f"'{target}'" in launcher
     assert launcher.index("config --format json") < launcher.index("switch ($Mode)")
     assert launcher.index("switch ($Mode)") < launcher.index("run --rm --build")
+
+
+def test_launcher_executes_validated_snapshot_without_ambient_mode_inputs() -> None:
+    launcher = (ROOT / "scripts" / "run_model_forge.ps1").read_text(encoding="utf-8")
+    receipt_clear = "[Environment]::SetEnvironmentVariable('FORGE_RECEIPT', $null, 'Process')"
+    probe_clear = (
+        "[Environment]::SetEnvironmentVariable('FORGE_ACCEPT_PLAN_HASH', $null, 'Process')"
+    )
+
+    assert receipt_clear in launcher
+    assert probe_clear in launcher
+    assert "$ComposeOutput | & docker compose -f - run" in launcher
+    assert "$ComposeOutput | & docker compose -f - --profile probe run" in launcher
+    assert "docker compose -f $ComposePath run" not in launcher
+    assert launcher.index(receipt_clear) < launcher.index("config --format json")
+    assert launcher.index(probe_clear) < launcher.index("config --format json")
+    assert launcher.index("config --format json") < launcher.index(
+        "$ComposeOutput | & docker compose -f - run"
+    )
     assert "Verify requires -Receipt" in launcher
     assert "Verify requires Receipt to remain beneath OutputDir" in launcher
     assert "$env:FORGE_RECEIPT = $ContainerReceipt" in launcher

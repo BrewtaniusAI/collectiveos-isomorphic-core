@@ -190,6 +190,8 @@ try {
     $env:FORGE_BASE_MODEL_DIR = (Resolve-Path -LiteralPath $BaseModelDir).Path
     $env:FORGE_DATASET_DIR = (Resolve-Path -LiteralPath $DatasetDir).Path
     $env:FORGE_OUTPUT = (Resolve-Path -LiteralPath $OutputDir).Path
+    [Environment]::SetEnvironmentVariable('FORGE_RECEIPT', $null, 'Process')
+    [Environment]::SetEnvironmentVariable('FORGE_ACCEPT_PLAN_HASH', $null, 'Process')
     if ($ContainerReceipt) {
         $env:FORGE_RECEIPT = $ContainerReceipt
     }
@@ -332,17 +334,17 @@ try {
 
     switch ($Mode) {
         'Validate' {
-            & docker compose -f $ComposePath run --rm --build simulate `
+            $ComposeOutput | & docker compose -f - run --rm --build simulate `
                 forge validate --plan /forge/plan.json
         }
         'Simulate' {
-            & docker compose -f $ComposePath run --rm --build simulate
+            $ComposeOutput | & docker compose -f - run --rm --build simulate
         }
         'Verify' {
-            & docker compose -f $ComposePath run --rm --build verify
+            $ComposeOutput | & docker compose -f - run --rm --build verify
         }
         'Probe' {
-            & docker compose -f $ComposePath --profile probe run --rm --build probe
+            $ComposeOutput | & docker compose -f - --profile probe run --rm --build probe
         }
     }
     if ($LASTEXITCODE -ne 0) {
