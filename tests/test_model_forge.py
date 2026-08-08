@@ -1500,6 +1500,32 @@ def test_preimport_entrypoint_allows_attested_nvidia_runtime_mounts(tmp_path: Pa
     assert errors == ()
 
 
+@pytest.mark.parametrize("target", forge_entrypoint.PROBE_OBSERVATION_PATHS)
+def test_preimport_probe_rejects_mounts_over_observation_sources(target: Path) -> None:
+    baseline = (
+        forge_entrypoint.MountRecord(Path("/"), frozenset({"rw"}), "overlay", "overlay"),
+        forge_entrypoint.MountRecord(Path("/proc"), frozenset({"rw"}), "proc", "proc"),
+        forge_entrypoint.MountRecord(Path("/sys"), frozenset({"ro"}), "sysfs", "sysfs"),
+        forge_entrypoint.MountRecord(
+            Path("/sys/fs/cgroup"),
+            frozenset({"ro"}),
+            "cgroup2",
+            "cgroup",
+        ),
+    )
+    injected = forge_entrypoint.MountRecord(
+        target,
+        frozenset({"ro"}),
+        "ext4",
+        "/attacker/forged-observation",
+    )
+
+    errors = forge_entrypoint.probe_observation_mount_errors((*baseline, injected))
+
+    assert errors
+    assert errors[0].startswith("Forge physical-preflight observation")
+
+
 def test_nvidia_runtime_mount_attestation_hashes_read_only_regular_files(
     tmp_path: Path,
 ) -> None:

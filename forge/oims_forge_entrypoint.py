@@ -8,11 +8,27 @@ import os
 import stat
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 ATTESTATION_PATH = Path("/usr/local/share/oims-forge/source.attestation")
 NVIDIA_RUNTIME_APPROVALS_PATH = Path("/usr/local/share/oims-forge/nvidia-runtime.approved")
 MOUNTINFO_PATH = Path("/proc/self/mountinfo")
 PROCESS_MAPS_PATH = Path("/proc/self/maps")
+PROBE_OBSERVATION_PATHS = (
+    Path("/proc/self/mountinfo"),
+    Path("/proc/self/maps"),
+    Path("/proc/self/status"),
+    Path("/proc/meminfo"),
+    Path("/proc/mounts"),
+    Path("/proc/net/route"),
+    Path("/sys/class/net"),
+    Path("/sys/fs/cgroup"),
+)
+OBSERVATION_ROOT_FILESYSTEMS = {
+    Path("/proc"): frozenset({"proc"}),
+    Path("/sys"): frozenset({"sysfs"}),
+    Path("/sys/fs/cgroup"): frozenset({"cgroup", "cgroup2"}),
+}
 NATIVE_RUNTIME_ROOTS = (
     Path("/bin"),
     Path("/sbin"),
@@ -44,6 +60,14 @@ MAX_NVIDIA_RUNTIME_MOUNTS = 256
 MAX_NVIDIA_RUNTIME_BYTES = 2 * 1024**3
 MAX_ATTESTATION_BYTES = 256
 MAX_NVIDIA_APPROVAL_BYTES = 128 * 1024
+MAX_PROC_METADATA_BYTES = 16 * 1024 * 1024
+
+
+class MountRecord(NamedTuple):
+    path: Path
+    options: frozenset[str]
+    filesystem_type: str
+    source: str
 
 
 def _is_revision(value: object) -> bool:
@@ -153,17 +177,51 @@ def _read_values(path: Path) -> dict[str, str] | None:
     return values
 
 
+def _read_proc_metadata(path: Path) -> bytes | None:
+    descriptor: int | None = None
+    try:
+        flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        metadata = os.fstat(descriptor)
+        proc_metadata = os.stat("/proc")
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_dev != proc_metadata.st_dev:
+            return None
+        payload = bytearray()
+        while chunk := os.read(descriptor, MAX_PROC_METADATA_BYTES + 1 - len(payload)):
+            payload.extend(chunk)
+            if len(payload) > MAX_PROC_METADATA_BYTES:
+                return None
+        final_metadata = os.fstat(descriptor)
+        if (
+            final_metadata.st_dev != metadata.st_dev
+            or final_metadata.st_ino != metadata.st_ino
+            or final_metadata.st_mtime_ns != metadata.st_mtime_ns
+        ):
+            return None
+        return bytes(payload)
+    except (OSError, OverflowError):
+        return None
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
 def _mount_records(
     path: Path = MOUNTINFO_PATH,
-) -> tuple[tuple[Path, frozenset[str]], ...] | None:
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError):
+) -> tuple[MountRecord, ...] | None:
+    payload = _read_proc_metadata(path)
+    if payload is None:
         return None
-    records: list[tuple[Path, frozenset[str]]] = []
+    try:
+        lines = payload.decode("utf-8").splitlines()
+    except UnicodeDecodeError:
+        return None
+    records: list[MountRecord] = []
     for line in lines:
-        fields = line.partition(" - ")[0].split()
-        if len(fields) < 6:
+        before, separator, after = line.partition(" - ")
+        fields = before.split()
+        filesystem_fields = after.split()
+        if not separator or len(fields) < 6 or len(filesystem_fields) < 2:
             return None
         value = (
             fields[4]
@@ -172,7 +230,14 @@ def _mount_records(
             .replace("\\012", "\n")
             .replace("\\134", "\\")
         )
-        records.append((Path(value), frozenset(fields[5].split(","))))
+        records.append(
+            MountRecord(
+                Path(value),
+                frozenset(fields[5].split(",")),
+                filesystem_fields[0],
+                filesystem_fields[1],
+            )
+        )
     return tuple(records)
 
 
@@ -219,9 +284,12 @@ def _native_runtime_paths(path: Path = PROCESS_MAPS_PATH) -> tuple[Path, ...] | 
         if not add_path(candidate, required=False):
             return None
 
+    payload = _read_proc_metadata(path)
+    if payload is None:
+        return None
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeDecodeError):
+        lines = payload.decode("utf-8").splitlines()
+    except UnicodeDecodeError:
         return None
     for line in lines:
         fields = line.split(maxsplit=5)
@@ -295,7 +363,8 @@ def nvidia_runtime_mount_attestation(
     allowed: list[Path] = []
     observed: set[Path] = set()
     total_bytes = 0
-    for path, options in candidates:
+    for record in candidates:
+        path, options = record[0], record[1]
         if path in observed or "ro" not in options or "rw" in options:
             return None
         observed.add(path)
@@ -344,6 +413,24 @@ def attested_nvidia_smi_path(paths: tuple[Path, ...]) -> Path | None:
     return candidates[0] if len(candidates) == 1 else None
 
 
+def probe_observation_mount_errors(records: tuple[MountRecord, ...]) -> tuple[str, ...]:
+    for root, expected_filesystems in OBSERVATION_ROOT_FILESYSTEMS.items():
+        root_records = tuple(record for record in records if record.path == root)
+        if len(root_records) != 1 or root_records[0].filesystem_type not in expected_filesystems:
+            return ("Forge physical-preflight observation filesystems cannot be verified",)
+    allowed_roots = set(OBSERVATION_ROOT_FILESYSTEMS)
+    for record in records:
+        mount = record.path
+        if mount == Path("/") or mount in allowed_roots:
+            continue
+        if any(
+            mount == target or mount in target.parents or target in mount.parents
+            for target in PROBE_OBSERVATION_PATHS
+        ):
+            return ("Forge physical-preflight observation sources contain an unexpected mount",)
+    return ()
+
+
 def protected_mount_errors(
     package_root: Path,
     attestation_path: Path = ATTESTATION_PATH,
@@ -354,7 +441,15 @@ def protected_mount_errors(
     native_runtime_roots: tuple[Path, ...] | None = None,
     allowed_native_mounts: tuple[Path, ...] = (),
     nvidia_approvals_path: Path = NVIDIA_RUNTIME_APPROVALS_PATH,
+    observed_mount_records: tuple[MountRecord, ...] | None = None,
+    protect_probe_observations: bool = False,
 ) -> tuple[str, ...]:
+    if protect_probe_observations:
+        if observed_mount_records is None:
+            return ("Forge physical-preflight observation filesystems cannot be verified",)
+        observation_errors = probe_observation_mount_errors(observed_mount_records)
+        if observation_errors:
+            return observation_errors
     runtime_paths = (
         native_runtime_paths if native_runtime_paths is not None else _native_runtime_paths()
     )
@@ -406,6 +501,8 @@ def verify_installed_package(
     package_root: Path | None = None,
     observed_mounts: tuple[Path, ...] | None = None,
     allowed_native_mounts: tuple[Path, ...] = (),
+    observed_mount_records: tuple[MountRecord, ...] | None = None,
+    protect_probe_observations: bool = False,
 ) -> tuple[str, ...]:
     values = _read_values(attestation_path)
     if values is None or set(values) != {"commit", "tree", "package_sha256"}:
@@ -422,6 +519,8 @@ def verify_installed_package(
         attestation_path,
         observed_mounts=observed_mounts,
         allowed_native_mounts=allowed_native_mounts,
+        observed_mount_records=observed_mount_records,
+        protect_probe_observations=protect_probe_observations,
     )
     if mount_errors:
         return mount_errors
@@ -487,6 +586,8 @@ def main(arguments: list[str] | None = None) -> int:
             else verify_installed_package(
                 observed_mounts=tuple(record[0] for record in records),
                 allowed_native_mounts=nvidia_attestation[0],
+                observed_mount_records=records,
+                protect_probe_observations=True,
             )
         )
     else:

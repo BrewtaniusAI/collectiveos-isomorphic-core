@@ -131,7 +131,9 @@ regular-file descriptor rather than a path-based metadata/read sequence. The ent
 installed package, attestation, verifier, standard executable/library roots, dynamic-loader
 configuration, the Python executable, or any file-backed process mapping. This protects Python
 dependencies, the native loader and shared libraries, system executables, the evidence, and the
-expected digest. The probe lane makes one narrow exception for NVIDIA Container Toolkit: exact
+expected digest. For physical probes it also authenticates the `/proc`, `/sys`, and cgroup
+filesystems and refuses extra mounts covering any status, memory, swap, route, interface, mount,
+mapping, or cgroup observation source. The probe lane makes one narrow exception for NVIDIA Container Toolkit: exact
 read-only `nvidia-smi`, `nvidia-debugdump`, `nvidia-persistenced`, CUDA MPS utility, and
 NVIDIA/CUDA shared-library file mounts are bounded and byte-hashed by this pre-import verifier.
 Every individual path and digest must match the source-controlled
