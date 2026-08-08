@@ -29,6 +29,15 @@ DYNAMIC_LOADER_CONFIGURATION = (
     Path("/etc/ld.so.preload"),
 )
 NVIDIA_RUNTIME_ATTESTATION_ENV = "OIMS_FORGE_NVIDIA_RUNTIME_SHA256"
+NVIDIA_RUNTIME_EXECUTABLES = frozenset(
+    {
+        "nvidia-smi",
+        "nvidia-debugdump",
+        "nvidia-persistenced",
+        "nvidia-cuda-mps-control",
+        "nvidia-cuda-mps-server",
+    }
+)
 MAX_NVIDIA_RUNTIME_MOUNTS = 256
 MAX_NVIDIA_RUNTIME_BYTES = 2 * 1024**3
 
@@ -194,7 +203,7 @@ def _native_runtime_paths(path: Path = PROCESS_MAPS_PATH) -> tuple[Path, ...] | 
 def _is_nvidia_runtime_path(path: Path) -> bool:
     executable_roots = {Path("/bin"), Path("/sbin"), Path("/usr/bin"), Path("/usr/sbin")}
     if path.parent in executable_roots:
-        return path.name == "nvidia-smi"
+        return path.name in NVIDIA_RUNTIME_EXECUTABLES
     library_roots = {Path("/lib"), Path("/lib64"), Path("/usr/lib"), Path("/usr/lib64")}
     if not any(root in path.parents for root in library_roots):
         return False

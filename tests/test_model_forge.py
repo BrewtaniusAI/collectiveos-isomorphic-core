@@ -435,6 +435,36 @@ def test_lone_surrogate_receipt_cli_fails_closed(
     assert any("unpaired Unicode surrogate" in error for error in payload["errors"])
 
 
+def test_forge_receipt_cli_defers_symlink_loop_to_guarded_verifier(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    receipt_loop = tmp_path / "receipt-loop.json"
+    receipt_loop.symlink_to(receipt_loop.name)
+
+    exit_code = cli_main(["forge", "verify", "--receipt", str(receipt_loop)])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 2
+    assert payload["valid"] is False
+    assert "cannot resolve Forge receipt path" in payload["errors"][0]
+
+
+def test_forge_plan_cli_defers_symlink_loop_to_guarded_loader(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    plan_loop = tmp_path / "plan-loop.json"
+    plan_loop.symlink_to(plan_loop.name)
+
+    exit_code = cli_main(["forge", "validate", "--plan", str(plan_loop)])
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 64
+    assert payload["status"] == "MALFORMED"
+    assert "cannot load Forge plan" in payload["errors"][0]
+
+
 @pytest.mark.parametrize("field", ["source_commit", "source_tree"])
 def test_resealed_receipt_cannot_drop_source_provenance(
     tmp_path: Path,
@@ -1444,6 +1474,21 @@ def test_nvidia_runtime_mount_attestation_hashes_read_only_regular_files(
     assert attestation[0] == (runtime_file,)
     assert attestation[1].startswith("sha256:")
     assert len(attestation[1]) == 71
+
+
+@pytest.mark.parametrize(
+    "executable",
+    [
+        "nvidia-smi",
+        "nvidia-debugdump",
+        "nvidia-persistenced",
+        "nvidia-cuda-mps-control",
+        "nvidia-cuda-mps-server",
+    ],
+)
+def test_nvidia_toolkit_utility_executable_set_is_bounded_and_complete(executable: str) -> None:
+    assert forge_entrypoint._is_nvidia_runtime_path(Path("/usr/bin") / executable)
+    assert not forge_entrypoint._is_nvidia_runtime_path(Path("/usr/bin/nvidia-unreviewed"))
 
 
 def test_preimport_probe_passes_nvidia_attestation_to_runtime(

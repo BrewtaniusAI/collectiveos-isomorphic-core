@@ -33,6 +33,10 @@ def _path(value: str) -> Path:
     return Path(value).expanduser().resolve()
 
 
+def _unresolved_path(value: str) -> Path:
+    return Path(value).expanduser()
+
+
 def _preflight_receipt_name(plan_hash: object) -> str:
     if (
         isinstance(plan_hash, str)
@@ -109,12 +113,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     forge_actions = forge.add_subparsers(dest="forge_action", required=True)
     forge_validate = forge_actions.add_parser("validate", help="validate one exact Forge plan")
-    forge_validate.add_argument("--plan", type=_path, required=True)
+    forge_validate.add_argument("--plan", type=_unresolved_path, required=True)
     forge_simulate = forge_actions.add_parser(
         "simulate",
         help="run deterministic virtual training without loading a model",
     )
-    forge_simulate.add_argument("--plan", type=_path, required=True)
+    forge_simulate.add_argument("--plan", type=_unresolved_path, required=True)
     forge_simulate.add_argument(
         "--output",
         type=_path,
@@ -124,7 +128,7 @@ def build_parser() -> argparse.ArgumentParser:
         "probe",
         help="inspect the offline GPU sandbox without loading weights or training",
     )
-    forge_probe.add_argument("--plan", type=_path, required=True)
+    forge_probe.add_argument("--plan", type=_unresolved_path, required=True)
     forge_probe.add_argument("--accept-plan-hash", required=True)
     forge_probe.add_argument(
         "--output",
@@ -135,7 +139,7 @@ def build_parser() -> argparse.ArgumentParser:
         "verify",
         help="verify a simulated Forge receipt and every linked artifact",
     )
-    forge_verify.add_argument("--receipt", type=_path, required=True)
+    forge_verify.add_argument("--receipt", type=_unresolved_path, required=True)
 
     verify = subparsers.add_parser("verify", help="verify a sealed OIMS artifact")
     verify.add_argument("--path", type=_path, required=True)
