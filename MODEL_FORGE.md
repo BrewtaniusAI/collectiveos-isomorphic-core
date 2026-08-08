@@ -87,9 +87,10 @@ The Compose environment is hardened independently of the Python validator:
 - `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`, and `HF_DATASETS_OFFLINE=1`.
 
 Before a simulation can emit evidence, the pre-import entrypoint authenticates the proc, sysfs, and
-cgroup observation sources. The runtime then observes UID/GID 65532, empty inheritable, permitted,
-effective, bounding, and ambient capability sets, no-new-privileges, seccomp filter mode plus the
-runtime-default allowlist's `EPERM` default-deny behavior and required keyring, `clone3`,
+cgroup observation sources and cross-checks their mountinfo IDs against kernel `statx` mount IDs in
+the current process namespace. The runtime then observes UID/GID 65532, empty inheritable,
+permitted, effective, bounding, and ambient capability sets, no-new-privileges, seccomp filter mode
+plus the runtime-default allowlist's `EPERM` default-deny behavior and required keyring, `clone3`,
 `io_uring_setup`, and `userfaultfd` restrictions, a read-only root, loopback-only networking, the
 exact Forge mount policy with no unexpected writable mount, unused and cgroup-disabled swap, a
 bounded memory cgroup, the exact `/forge/output` evidence destination, and at most 512 PIDs.

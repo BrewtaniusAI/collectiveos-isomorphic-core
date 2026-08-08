@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import importlib.util
 import os
 import stat
+import struct
 import sys
 from pathlib import Path
 from typing import NamedTuple
@@ -62,6 +64,8 @@ MAX_NVIDIA_RUNTIME_BYTES = 2 * 1024**3
 MAX_ATTESTATION_BYTES = 256
 MAX_NVIDIA_APPROVAL_BYTES = 128 * 1024
 MAX_PROC_METADATA_BYTES = 16 * 1024 * 1024
+STATX_MNT_ID = 0x1000
+STATX_MNT_ID_OFFSET = 144
 
 
 class MountRecord(NamedTuple):
@@ -70,6 +74,7 @@ class MountRecord(NamedTuple):
     filesystem_type: str
     source: str
     root: Path
+    mount_id: int = 0
 
 
 def _is_revision(value: object) -> bool:
@@ -223,7 +228,12 @@ def _mount_records(
         before, separator, after = line.partition(" - ")
         fields = before.split()
         filesystem_fields = after.split()
-        if not separator or len(fields) < 6 or len(filesystem_fields) < 2:
+        if (
+            not separator
+            or len(fields) < 6
+            or len(filesystem_fields) < 2
+            or not fields[0].isdigit()
+        ):
             return None
         value = (
             fields[4]
@@ -246,9 +256,55 @@ def _mount_records(
                 filesystem_fields[0],
                 filesystem_fields[1],
                 Path(root),
+                int(fields[0]),
             )
         )
     return tuple(records)
+
+
+def _path_mount_id(path: Path) -> int | None:
+    try:
+        statx = ctypes.CDLL(None, use_errno=True).statx
+        statx.argtypes = (
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_uint,
+            ctypes.c_void_p,
+        )
+        statx.restype = ctypes.c_int
+        buffer = ctypes.create_string_buffer(256)
+        if statx(-100, os.fsencode(path), 0, STATX_MNT_ID, buffer) != 0:
+            return None
+        mask = struct.unpack_from("=I", buffer.raw, 0)[0]
+        if mask & STATX_MNT_ID == 0:
+            return None
+        return struct.unpack_from("=Q", buffer.raw, STATX_MNT_ID_OFFSET)[0]
+    except (AttributeError, OSError, struct.error, TypeError, ValueError):
+        return None
+
+
+def _mount_records_bind_current_namespace(records: tuple[MountRecord, ...]) -> bool:
+    authenticated_paths = tuple(
+        dict.fromkeys((MOUNTINFO_PATH, PROCESS_MAPS_PATH, *SANDBOX_OBSERVATION_PATHS))
+    )
+    for path in authenticated_paths:
+        candidates = tuple(
+            record
+            for record in records
+            if record.path == path or record.path == Path("/") or record.path in path.parents
+        )
+        if not candidates:
+            return False
+        maximum_depth = max(len(record.path.parts) for record in candidates)
+        expected_mount_ids = {
+            record.mount_id
+            for record in candidates
+            if len(record.path.parts) == maximum_depth and record.mount_id > 0
+        }
+        if _path_mount_id(path) not in expected_mount_ids:
+            return False
+    return True
 
 
 def _mount_points(path: Path = MOUNTINFO_PATH) -> tuple[Path, ...] | None:
@@ -605,7 +661,7 @@ def main(arguments: list[str] | None = None) -> int:
     os.environ.pop(NVIDIA_RUNTIME_ATTESTATION_ENV, None)
     os.environ.pop(NVIDIA_SMI_PATH_ENV, None)
     records = _mount_records()
-    if records is None:
+    if records is None or not _mount_records_bind_current_namespace(records):
         errors = ("Forge runtime mount topology cannot be verified",)
         nvidia_attestation = None
         nvidia_smi_path = None

@@ -16,6 +16,9 @@ import yaml
 import forge.oims_forge_entrypoint as forge_entrypoint
 import oims.cli as cli_module
 import oims.model_forge as model_forge_module
+from forge.oims_forge_entrypoint import (
+    _mount_records_bind_current_namespace as entrypoint_mount_records_bind_current_namespace,
+)
 from forge.oims_forge_entrypoint import package_digest as entrypoint_package_digest
 from forge.oims_forge_entrypoint import protected_mount_errors, verify_installed_package
 from oims.cli import main as cli_main
@@ -80,6 +83,11 @@ def attested_source_for_forge_exercises(
         lambda: True,
     )
     monkeypatch.setattr(cli_module, "_forge_output_mount_matches", lambda plan, output: True)
+    monkeypatch.setattr(
+        forge_entrypoint,
+        "_mount_records_bind_current_namespace",
+        lambda records: True,
+    )
     if request.node.get_closest_marker("direct_source"):
         return
     original = model_forge_module._verified_execution_source
@@ -1926,6 +1934,47 @@ def test_preimport_mountinfo_parser_preserves_cgroup_root() -> None:
 
     assert records is not None
     assert records[0].root == Path("/attacker subgroup")
+    assert records[0].mount_id == 117
+
+
+def test_preimport_mountinfo_is_bound_to_the_current_mount_namespace() -> None:
+    records = (
+        forge_entrypoint.MountRecord(
+            Path("/"), frozenset({"ro"}), "overlay", "overlay", Path("/"), 1
+        ),
+        forge_entrypoint.MountRecord(
+            Path("/proc"), frozenset({"rw"}), "proc", "proc", Path("/"), 2
+        ),
+        forge_entrypoint.MountRecord(
+            Path("/sys"), frozenset({"ro"}), "sysfs", "sysfs", Path("/"), 3
+        ),
+        forge_entrypoint.MountRecord(
+            Path("/sys/fs/cgroup"),
+            frozenset({"ro"}),
+            "cgroup2",
+            "cgroup",
+            Path("/"),
+            4,
+        ),
+    )
+
+    def current_mount_id(path: Path) -> int:
+        if path == forge_entrypoint.MOUNTINFO_PATH:
+            return 2
+        if path == Path("/sys/fs/cgroup") or Path("/sys/fs/cgroup") in path.parents:
+            return 4
+        if path == Path("/sys") or Path("/sys") in path.parents:
+            return 3
+        return 2
+
+    with patch.object(forge_entrypoint, "_path_mount_id", side_effect=current_mount_id):
+        assert entrypoint_mount_records_bind_current_namespace(records)
+
+    def helper_mount_id(path: Path) -> int:
+        return 99 if path == forge_entrypoint.MOUNTINFO_PATH else current_mount_id(path)
+
+    with patch.object(forge_entrypoint, "_path_mount_id", side_effect=helper_mount_id):
+        assert not entrypoint_mount_records_bind_current_namespace(records)
 
 
 @pytest.mark.parametrize(
