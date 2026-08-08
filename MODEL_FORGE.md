@@ -194,8 +194,9 @@ source to the held launcher's `/proc/<pid>/fd/<fd>` object; on
 Windows, non-delete-sharing filesystem handles retain the verified names until Compose returns.
 The validated snapshot is translated to an argument-array `docker run` whose four `--mount`
 arguments set Engine-level `bind-recursive=disabled`; late descendant mounts are therefore excluded
-at the bind operation itself. Those leases and nonrecursive binds close the final check-to-bind
-race. The launcher executes that exact rendered policy
+at the bind operation itself, and the probe request carries the validated NVIDIA driver as well as
+its exact device ID. Those leases and nonrecursive binds close the final check-to-bind race. The
+launcher executes that exact rendered policy
 from memory rather than reparsing the mutable Compose path. This keeps source and runtime evidence
 bound to the exact inspected host objects and bytes.
 

@@ -2575,6 +2575,27 @@ def test_launcher_disables_recursive_binds_at_the_docker_engine_boundary() -> No
     assert revalidation < invocation
 
 
+def test_launcher_invokes_the_docker_run_subcommand_before_run_options() -> None:
+    launcher = (ROOT / "scripts" / "run_model_forge.ps1").read_text(encoding="utf-8")
+
+    arguments = launcher.index(
+        "$DockerArguments = [System.Collections.Generic.List[string]]::new()"
+    )
+    run = launcher.index("$DockerArguments.Add('run')", arguments)
+    options = launcher.index("foreach ($Argument in @('--rm', '--pull'", run)
+    invocation = launcher.index("& docker @DockerArguments", options)
+    assert arguments < run < options < invocation
+
+
+def test_launcher_preserves_the_validated_nvidia_driver_in_gpu_request() -> None:
+    launcher = (ROOT / "scripts" / "run_model_forge.ps1").read_text(encoding="utf-8")
+
+    assert "$Driver = [string]$Reservations[0].driver" in launcher
+    assert "$DeviceIds = @($Reservations[0].device_ids)" in launcher
+    assert "\"driver=$Driver,device=$($DeviceIds -join ',')\"" in launcher
+    assert "$DockerArguments.Add('device=' +" not in launcher
+
+
 def test_launcher_rejects_writable_output_aliases_of_protected_inputs() -> None:
     launcher = (ROOT / "scripts" / "run_model_forge.ps1").read_text(encoding="utf-8")
 

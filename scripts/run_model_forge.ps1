@@ -837,6 +837,7 @@ function Invoke-ForgeDockerRun {
     )
 
     $DockerArguments = [System.Collections.Generic.List[string]]::new()
+    $DockerArguments.Add('run')
     foreach ($Argument in @('--rm', '--pull', [string]$Service.pull_policy)) {
         $DockerArguments.Add($Argument)
     }
@@ -896,8 +897,10 @@ function Invoke-ForgeDockerRun {
     }
     if ($EnableGpu) {
         $Reservations = @($Service.deploy.resources.reservations.devices)
+        $Driver = [string]$Reservations[0].driver
+        $DeviceIds = @($Reservations[0].device_ids)
         $DockerArguments.Add('--gpus')
-        $DockerArguments.Add('device=' + (@($Reservations[0].device_ids) -join ','))
+        $DockerArguments.Add("driver=$Driver,device=$($DeviceIds -join ',')")
     }
     $Entrypoint = @($Service.entrypoint)
     $DockerArguments.Add('--entrypoint')
