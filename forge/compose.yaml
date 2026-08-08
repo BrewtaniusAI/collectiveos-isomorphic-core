@@ -16,8 +16,8 @@ x-forge-common: &forge-common
   security_opt:
     - no-new-privileges:true
   pids_limit: 512
-  mem_limit: ${FORGE_MEMORY_LIMIT:-120g}
-  memswap_limit: ${FORGE_MEMORY_LIMIT:-120g}
+  mem_limit: ${FORGE_MEMORY_LIMIT:-124g}
+  memswap_limit: ${FORGE_MEMORY_LIMIT:-124g}
   shm_size: 8gb
   environment:
     HF_HUB_OFFLINE: "1"

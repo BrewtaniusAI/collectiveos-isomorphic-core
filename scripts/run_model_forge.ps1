@@ -21,7 +21,7 @@ param(
     [string]$AcceptPlanHash,
     [string]$SourceCommit,
     [int]$GpuDeviceId = 0,
-    [string]$MemoryLimit = '120g'
+    [string]$MemoryLimit = '124g'
 )
 
 $ErrorActionPreference = 'Stop'

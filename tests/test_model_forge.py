@@ -221,6 +221,38 @@ def test_resealed_receipt_cannot_drop_source_provenance(
     assert f"Forge receipt {field} is invalid" in result["errors"]
 
 
+def test_resealed_receipt_cannot_substitute_an_unrelated_source_tree(tmp_path: Path) -> None:
+    receipt = simulate_forge_run(load_example(), artifacts_dir=tmp_path)
+    run_dir = tmp_path / receipt["run_id"]
+    receipt["source_tree"] = "f" * 40
+    receipt = seal_record(receipt)
+    (run_dir / "receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
+    result = verify_forge_run(run_dir / "receipt.json")
+    assert result["valid"] is False
+    assert "Forge receipt source_tree does not match source_commit" in result["errors"]
+
+
+@pytest.mark.parametrize("field", ["telemetry_file", "checkpoint_directory", "candidate_file"])
+def test_receipt_artifact_paths_fail_closed_on_embedded_nul(
+    tmp_path: Path,
+    field: str,
+) -> None:
+    receipt = simulate_forge_run(load_example(), artifacts_dir=tmp_path)
+    run_dir = tmp_path / receipt["run_id"]
+    receipt[field] = "\0"
+    receipt = seal_record(receipt)
+    (run_dir / "receipt.json").write_text(json.dumps(receipt), encoding="utf-8")
+    result = verify_forge_run(run_dir / "receipt.json")
+    assert result["valid"] is False
+    assert f"Forge receipt field {field} is invalid" in result["errors"]
+
+
+def test_receipt_input_path_fails_closed_on_embedded_nul() -> None:
+    result = verify_forge_run("\0")
+    assert result["valid"] is False
+    assert "cannot resolve Forge receipt path" in result["errors"][0]
+
+
 def test_probe_requires_exact_dual_unlock_before_device_inspection() -> None:
     plan = probe_plan()
     with (
@@ -296,7 +328,8 @@ def test_probe_can_prove_a_locked_4090_sandbox_without_training() -> None:
         patch(
             "oims.model_forge._cgroup_limits",
             return_value={
-                "memory_limit_bytes": 120 * 1024**3,
+                "memory_limit_bytes": 124 * 1024**3,
+                "memory_current_bytes": 1 * 1024**3,
                 "swap_limit_bytes": 0,
                 "pids_limit": 512,
             },
@@ -445,7 +478,46 @@ def test_direct_simulation_refuses_dirty_source_before_writing(tmp_path: Path) -
     assert not list(tmp_path.iterdir())
 
 
-def test_probe_requires_current_host_memory_headroom() -> None:
+@pytest.mark.parametrize(
+    ("memory_info", "cgroup_limits", "expected_error"),
+    [
+        (
+            {
+                "MemTotal": 128 * 1024**3,
+                "MemAvailable": 1 * 1024**3,
+                "SwapTotal": 0,
+                "SwapFree": 0,
+            },
+            {
+                "memory_limit_bytes": 124 * 1024**3,
+                "memory_current_bytes": 1 * 1024**3,
+                "swap_limit_bytes": 0,
+                "pids_limit": 512,
+            },
+            "available host memory is below the plan's host-memory ceiling",
+        ),
+        (
+            {
+                "MemTotal": 128 * 1024**3,
+                "MemAvailable": 121 * 1024**3,
+                "SwapTotal": 0,
+                "SwapFree": 0,
+            },
+            {
+                "memory_limit_bytes": 120 * 1024**3,
+                "memory_current_bytes": 1 * 1024**3,
+                "swap_limit_bytes": 0,
+                "pids_limit": 512,
+            },
+            "available container memory is below the plan's host-memory ceiling",
+        ),
+    ],
+)
+def test_probe_requires_current_memory_headroom(
+    memory_info: dict[str, int],
+    cgroup_limits: dict[str, int],
+    expected_error: str,
+) -> None:
     plan = probe_plan()
     environment = {
         "OIMS_FORGE_ENABLE_PROBE": "1",
@@ -464,12 +536,7 @@ def test_probe_requires_current_host_memory_headroom() -> None:
         ),
         patch(
             "oims.model_forge._memory_info",
-            return_value={
-                "MemTotal": 128 * 1024**3,
-                "MemAvailable": 1 * 1024**3,
-                "SwapTotal": 0,
-                "SwapFree": 0,
-            },
+            return_value=memory_info,
         ),
         patch("oims.model_forge._root_is_read_only", return_value=True),
         patch("oims.model_forge._default_route_present", return_value=False),
@@ -487,11 +554,7 @@ def test_probe_requires_current_host_memory_headroom() -> None:
         ),
         patch(
             "oims.model_forge._cgroup_limits",
-            return_value={
-                "memory_limit_bytes": 120 * 1024**3,
-                "swap_limit_bytes": 0,
-                "pids_limit": 512,
-            },
+            return_value=cgroup_limits,
         ),
         patch("oims.model_forge.os.geteuid", return_value=65532),
         patch("oims.model_forge._container_source_attestation_errors", return_value=()),
@@ -504,7 +567,7 @@ def test_probe_requires_current_host_memory_headroom() -> None:
             environment=environment,
         )
     assert result["lawful"] is False
-    assert "available host memory is below the plan's host-memory ceiling" in result["errors"]
+    assert expected_error in result["errors"]
     run.assert_not_called()
 
 
@@ -551,7 +614,8 @@ def test_probe_requires_process_level_output_write() -> None:
         patch(
             "oims.model_forge._cgroup_limits",
             return_value={
-                "memory_limit_bytes": 120 * 1024**3,
+                "memory_limit_bytes": 124 * 1024**3,
+                "memory_current_bytes": 1 * 1024**3,
                 "swap_limit_bytes": 0,
                 "pids_limit": 512,
             },

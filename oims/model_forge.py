@@ -472,6 +472,24 @@ def _verified_execution_source(
     return (commit, tree) if _is_revision(tree) else None
 
 
+def _source_tree_matches_commit(commit: object, tree: object) -> bool:
+    if not _is_revision(commit) or not _is_revision(tree):
+        return False
+    if _read_source_attestation() == (commit, tree):
+        return True
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(ROOT), "rev-parse", "--verify", f"{commit}^{{tree}}"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return completed.stdout.strip() == tree
+
+
 def _strict_json_loads(text: str) -> object:
     def pairs_hook(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
         result: dict[str, Any] = {}
@@ -1063,7 +1081,7 @@ def _load_json_object(
 def verify_forge_run(receipt_path: Path | str) -> dict[str, Any]:
     try:
         path = Path(receipt_path).resolve()
-    except (OSError, RuntimeError) as exc:
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
         return {
             "valid": False,
             "receipt_path": str(receipt_path),
@@ -1152,8 +1170,14 @@ def verify_forge_run(receipt_path: Path | str) -> dict[str, Any]:
         errors.append("Forge receipt source_commit is invalid")
     if not _is_revision(source_tree):
         errors.append("Forge receipt source_tree is invalid")
+    if (
+        _is_revision(source_commit)
+        and _is_revision(source_tree)
+        and not _source_tree_matches_commit(source_commit, source_tree)
+    ):
+        errors.append("Forge receipt source_tree does not match source_commit")
 
-    telemetry_path = run_dir / str(receipt.get("telemetry_file", ""))
+    telemetry_path = run_dir / "telemetry.jsonl"
     telemetry_bytes: bytes | None = None
     if telemetry_path.is_symlink() or telemetry_path.resolve().parent != run_dir.resolve():
         errors.append("Forge telemetry path escaped the run directory")
@@ -1197,7 +1221,7 @@ def verify_forge_run(receipt_path: Path | str) -> dict[str, Any]:
         if telemetry_bytes != expected_telemetry:
             errors.append("Forge telemetry failed semantic replay")
 
-    checkpoint_dir = run_dir / str(receipt.get("checkpoint_directory", ""))
+    checkpoint_dir = run_dir / "checkpoints"
     if (
         checkpoint_dir.is_symlink()
         or checkpoint_dir.resolve().parent != run_dir.resolve()
@@ -1257,7 +1281,7 @@ def verify_forge_run(receipt_path: Path | str) -> dict[str, Any]:
     if receipt.get("checkpoint_chain_head") != previous:
         errors.append("Forge checkpoint chain head is invalid")
 
-    candidate_path = run_dir / str(receipt.get("candidate_file", ""))
+    candidate_path = run_dir / "candidate" / "synthetic-candidate.json"
     if candidate_path.is_symlink() or candidate_path.resolve().parent.parent != run_dir.resolve():
         errors.append("Forge candidate path escaped the run directory")
     elif not candidate_path.is_file():
@@ -1457,10 +1481,12 @@ def _cgroup_limits() -> dict[str, int | None]:
         return int(value) if value.isdigit() else None
 
     memory_limit = read_limit(Path("/sys/fs/cgroup/memory.max"))
+    memory_current = read_limit(Path("/sys/fs/cgroup/memory.current"))
     swap_limit = read_limit(Path("/sys/fs/cgroup/memory.swap.max"))
     pids_limit = read_limit(Path("/sys/fs/cgroup/pids.max"))
     if memory_limit is None:
         memory_limit = read_limit(Path("/sys/fs/cgroup/memory/memory.limit_in_bytes"))
+        memory_current = read_limit(Path("/sys/fs/cgroup/memory/memory.usage_in_bytes"))
         memory_and_swap = read_limit(Path("/sys/fs/cgroup/memory/memory.memsw.limit_in_bytes"))
         if memory_limit is not None and memory_and_swap is not None:
             swap_limit = max(0, memory_and_swap - memory_limit)
@@ -1468,6 +1494,7 @@ def _cgroup_limits() -> dict[str, int | None]:
         pids_limit = read_limit(Path("/sys/fs/cgroup/pids/pids.max"))
     return {
         "memory_limit_bytes": memory_limit,
+        "memory_current_bytes": memory_current,
         "swap_limit_bytes": swap_limit,
         "pids_limit": pids_limit,
     }
@@ -1536,10 +1563,23 @@ def inspect_physical_preflight(
         _is_int(host_limit, minimum=1) and available_host_memory < host_limit
     ):
         errors.append("available host memory is below the plan's host-memory ceiling")
-    if not _is_int(cgroup_limits["memory_limit_bytes"], minimum=1) or (
-        _is_int(host_limit, minimum=1) and cgroup_limits["memory_limit_bytes"] < host_limit
+    cgroup_memory_limit = cgroup_limits["memory_limit_bytes"]
+    cgroup_memory_current = cgroup_limits["memory_current_bytes"]
+    cgroup_memory_available = (
+        cgroup_memory_limit - cgroup_memory_current
+        if _is_int(cgroup_memory_limit, minimum=1)
+        and _is_int(cgroup_memory_current, minimum=0)
+        and cgroup_memory_current <= cgroup_memory_limit
+        else None
+    )
+    if not _is_int(cgroup_memory_limit, minimum=1) or (
+        _is_int(host_limit, minimum=1) and cgroup_memory_limit < host_limit
     ):
         errors.append("container memory limit is below the plan's host-memory ceiling")
+    if not _is_int(cgroup_memory_available, minimum=0) or (
+        _is_int(host_limit, minimum=1) and cgroup_memory_available < host_limit
+    ):
+        errors.append("available container memory is below the plan's host-memory ceiling")
     if cgroup_limits["swap_limit_bytes"] != 0:
         errors.append("container swap limit is not zero")
     if not _is_int(cgroup_limits["pids_limit"], minimum=1) or cgroup_limits["pids_limit"] > 512:
@@ -1633,7 +1673,9 @@ def inspect_physical_preflight(
             ),
             "host_memory_bytes": host_memory,
             "host_memory_available_bytes": available_host_memory,
-            "container_memory_limit_bytes": cgroup_limits["memory_limit_bytes"],
+            "container_memory_limit_bytes": cgroup_memory_limit,
+            "container_memory_current_bytes": cgroup_memory_current,
+            "container_memory_available_bytes": cgroup_memory_available,
             "container_swap_limit_bytes": cgroup_limits["swap_limit_bytes"],
             "container_pids_limit": cgroup_limits["pids_limit"],
         },

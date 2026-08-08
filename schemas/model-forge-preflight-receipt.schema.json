@@ -74,6 +74,8 @@
         "host_memory_bytes",
         "host_memory_available_bytes",
         "container_memory_limit_bytes",
+        "container_memory_current_bytes",
+        "container_memory_available_bytes",
         "container_swap_limit_bytes",
         "container_pids_limit"
       ],
@@ -115,6 +117,18 @@
           "oneOf": [
             {"type": "null"},
             {"type": "integer", "minimum": 1}
+          ]
+        },
+        "container_memory_current_bytes": {
+          "oneOf": [
+            {"type": "null"},
+            {"type": "integer", "minimum": 0}
+          ]
+        },
+        "container_memory_available_bytes": {
+          "oneOf": [
+            {"type": "null"},
+            {"type": "integer", "minimum": 0}
           ]
         },
         "container_swap_limit_bytes": {
@@ -202,6 +216,9 @@
               "output_process_writable": {"const": true},
               "tmpfs_active": {"const": true},
               "swap_used_bytes": {"const": 0},
+              "container_memory_limit_bytes": {"type": "integer", "minimum": 1},
+              "container_memory_current_bytes": {"type": "integer", "minimum": 0},
+              "container_memory_available_bytes": {"type": "integer", "minimum": 0},
               "container_swap_limit_bytes": {"const": 0},
               "container_pids_limit": {"type": "integer", "maximum": 512}
             }
