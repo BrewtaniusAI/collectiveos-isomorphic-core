@@ -20,6 +20,7 @@
     "network_mode",
     "sandbox_observation",
     "gpu",
+    "nvidia_runtime_sha256",
     "errors",
     "governance_route",
     "source_commit",
@@ -172,6 +173,12 @@
         }
       ]
     },
+    "nvidia_runtime_sha256": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+      ]
+    },
     "errors": {"type": "array", "items": {"type": "string"}},
     "governance_route": {"const": ["QC", "GATA", "GATA_PRIME"]},
     "source_commit": {
@@ -197,6 +204,10 @@
           "status": {"const": "READY"},
           "errors": {"maxItems": 0},
           "gpu": {"type": "object"},
+          "nvidia_runtime_sha256": {
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
           "source_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
           "source_tree": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
           "sandbox_observation": {

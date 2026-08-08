@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import os
+import stat
 import sys
 from pathlib import Path
 
@@ -27,6 +28,9 @@ DYNAMIC_LOADER_CONFIGURATION = (
     Path("/etc/ld.so.conf.d"),
     Path("/etc/ld.so.preload"),
 )
+NVIDIA_RUNTIME_ATTESTATION_ENV = "OIMS_FORGE_NVIDIA_RUNTIME_SHA256"
+MAX_NVIDIA_RUNTIME_MOUNTS = 256
+MAX_NVIDIA_RUNTIME_BYTES = 2 * 1024**3
 
 
 def _is_revision(value: object) -> bool:
@@ -105,15 +109,17 @@ def _read_values(path: Path) -> dict[str, str] | None:
     return values
 
 
-def _mount_points(path: Path = MOUNTINFO_PATH) -> tuple[Path, ...] | None:
+def _mount_records(
+    path: Path = MOUNTINFO_PATH,
+) -> tuple[tuple[Path, frozenset[str]], ...] | None:
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeDecodeError):
         return None
-    mount_points: list[Path] = []
+    records: list[tuple[Path, frozenset[str]]] = []
     for line in lines:
         fields = line.partition(" - ")[0].split()
-        if len(fields) < 5:
+        if len(fields) < 6:
             return None
         value = (
             fields[4]
@@ -122,12 +128,33 @@ def _mount_points(path: Path = MOUNTINFO_PATH) -> tuple[Path, ...] | None:
             .replace("\\012", "\n")
             .replace("\\134", "\\")
         )
-        mount_points.append(Path(value))
-    return tuple(mount_points)
+        records.append((Path(value), frozenset(fields[5].split(","))))
+    return tuple(records)
+
+
+def _mount_points(path: Path = MOUNTINFO_PATH) -> tuple[Path, ...] | None:
+    records = _mount_records(path)
+    return tuple(record[0] for record in records) if records is not None else None
+
+
+def _native_runtime_root_paths() -> tuple[Path, ...] | None:
+    roots: set[Path] = set()
+    try:
+        for candidate in NATIVE_RUNTIME_ROOTS:
+            if not candidate.exists() and not candidate.is_symlink():
+                continue
+            roots.add(candidate)
+            roots.add(candidate.resolve(strict=True))
+    except (OSError, RuntimeError):
+        return None
+    return tuple(sorted(roots, key=str))
 
 
 def _native_runtime_paths(path: Path = PROCESS_MAPS_PATH) -> tuple[Path, ...] | None:
-    protected: set[Path] = set()
+    runtime_roots = _native_runtime_root_paths()
+    if runtime_roots is None:
+        return None
+    protected: set[Path] = set(runtime_roots)
 
     def add_path(candidate: Path, *, required: bool) -> bool:
         try:
@@ -144,7 +171,7 @@ def _native_runtime_paths(path: Path = PROCESS_MAPS_PATH) -> tuple[Path, ...] | 
         return None
     if not add_path(Path("/proc/self/exe"), required=True):
         return None
-    for candidate in (*NATIVE_RUNTIME_ROOTS, *DYNAMIC_LOADER_CONFIGURATION):
+    for candidate in DYNAMIC_LOADER_CONFIGURATION:
         if not add_path(candidate, required=False):
             return None
 
@@ -164,6 +191,72 @@ def _native_runtime_paths(path: Path = PROCESS_MAPS_PATH) -> tuple[Path, ...] | 
     return tuple(sorted(protected, key=str))
 
 
+def _is_nvidia_runtime_path(path: Path) -> bool:
+    executable_roots = {Path("/bin"), Path("/sbin"), Path("/usr/bin"), Path("/usr/sbin")}
+    if path.parent in executable_roots:
+        return path.name == "nvidia-smi"
+    library_roots = {Path("/lib"), Path("/lib64"), Path("/usr/lib"), Path("/usr/lib64")}
+    if not any(root in path.parents for root in library_roots):
+        return False
+    name = path.name
+    return ".so" in name and name.startswith(
+        ("libcuda", "libnvidia", "libnvcuvid", "libGLX_nvidia", "libEGL_nvidia")
+    )
+
+
+def nvidia_runtime_mount_attestation(
+    records: tuple[tuple[Path, frozenset[str]], ...],
+) -> tuple[tuple[Path, ...], str] | None:
+    candidates = sorted(
+        (record for record in records if _is_nvidia_runtime_path(record[0])),
+        key=lambda record: str(record[0]),
+    )
+    if len(candidates) > MAX_NVIDIA_RUNTIME_MOUNTS:
+        return None
+    digest = hashlib.sha256(b"OIMS-NVIDIA-RUNTIME-MOUNTS-v1\0")
+    allowed: list[Path] = []
+    observed: set[Path] = set()
+    total_bytes = 0
+    for path, options in candidates:
+        if path in observed or "ro" not in options or "rw" in options:
+            return None
+        observed.add(path)
+        descriptor: int | None = None
+        try:
+            flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+            descriptor = os.open(path, flags)
+            metadata = os.fstat(descriptor)
+            if not stat.S_ISREG(metadata.st_mode):
+                return None
+            encoded_path = str(path).encode("utf-8")
+            digest.update(len(encoded_path).to_bytes(8, "big"))
+            digest.update(encoded_path)
+            digest.update(metadata.st_size.to_bytes(8, "big"))
+            file_bytes = 0
+            while chunk := os.read(descriptor, 1024 * 1024):
+                file_bytes += len(chunk)
+                total_bytes += len(chunk)
+                if total_bytes > MAX_NVIDIA_RUNTIME_BYTES:
+                    return None
+                digest.update(chunk)
+            final_metadata = os.fstat(descriptor)
+            if (
+                file_bytes != metadata.st_size
+                or final_metadata.st_dev != metadata.st_dev
+                or final_metadata.st_ino != metadata.st_ino
+                or final_metadata.st_size != metadata.st_size
+                or final_metadata.st_mtime_ns != metadata.st_mtime_ns
+            ):
+                return None
+        except (OSError, OverflowError, UnicodeError):
+            return None
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+        allowed.append(path)
+    return tuple(allowed), "sha256:" + digest.hexdigest()
+
+
 def protected_mount_errors(
     package_root: Path,
     attestation_path: Path = ATTESTATION_PATH,
@@ -171,19 +264,26 @@ def protected_mount_errors(
     observed_mounts: tuple[Path, ...] | None = None,
     interpreter_prefix: Path | None = None,
     native_runtime_paths: tuple[Path, ...] | None = None,
+    native_runtime_roots: tuple[Path, ...] | None = None,
+    allowed_native_mounts: tuple[Path, ...] = (),
 ) -> tuple[str, ...]:
     runtime_paths = (
         native_runtime_paths if native_runtime_paths is not None else _native_runtime_paths()
     )
     if runtime_paths is None:
         return ("Forge native executable runtime cannot be verified",)
+    runtime_roots = (
+        native_runtime_roots if native_runtime_roots is not None else _native_runtime_root_paths()
+    )
+    if runtime_roots is None:
+        return ("Forge native executable runtime cannot be verified",)
     try:
-        protected = (
+        core_protected = (
             package_root.resolve(strict=True),
             attestation_path.resolve(strict=True),
             (verifier_path or Path(__file__)).resolve(strict=True),
             (interpreter_prefix or Path(sys.prefix)).resolve(strict=True),
-            *runtime_paths,
+            *(target for target in runtime_paths if target not in runtime_roots),
         )
     except (OSError, RuntimeError):
         return ("Forge protected source paths cannot be resolved",)
@@ -194,10 +294,15 @@ def protected_mount_errors(
     for mount in mounts:
         if mount == filesystem_root:
             continue
-        if any(
+        intersects_core = any(
             mount == target or mount in target.parents or target in mount.parents
-            for target in protected
-        ):
+            for target in core_protected
+        )
+        intersects_runtime_root = any(
+            mount == target or mount in target.parents or target in mount.parents
+            for target in runtime_roots
+        )
+        if intersects_core or (intersects_runtime_root and mount not in allowed_native_mounts):
             return ("Forge protected executable runtime contains an unexpected mount",)
     return ()
 
@@ -206,6 +311,7 @@ def verify_installed_package(
     attestation_path: Path = ATTESTATION_PATH,
     package_root: Path | None = None,
     observed_mounts: tuple[Path, ...] | None = None,
+    allowed_native_mounts: tuple[Path, ...] = (),
 ) -> tuple[str, ...]:
     values = _read_values(attestation_path)
     if values is None or set(values) != {"commit", "tree", "package_sha256"}:
@@ -221,6 +327,7 @@ def verify_installed_package(
         root,
         attestation_path,
         observed_mounts=observed_mounts,
+        allowed_native_mounts=allowed_native_mounts,
     )
     if mount_errors:
         return mount_errors
@@ -266,11 +373,30 @@ def main(arguments: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if arguments is None else arguments)
     if argv == ["--seal-attestation"]:
         return seal_attestation()
-    errors = verify_installed_package()
+    os.environ.pop(NVIDIA_RUNTIME_ATTESTATION_ENV, None)
+    records = _mount_records()
+    if records is None:
+        errors = ("Forge runtime mount topology cannot be verified",)
+        nvidia_attestation = None
+    elif argv[:2] == ["forge", "probe"]:
+        nvidia_attestation = nvidia_runtime_mount_attestation(records)
+        errors = (
+            ("Forge NVIDIA runtime mounts cannot be attested",)
+            if nvidia_attestation is None
+            else verify_installed_package(
+                observed_mounts=tuple(record[0] for record in records),
+                allowed_native_mounts=nvidia_attestation[0],
+            )
+        )
+    else:
+        nvidia_attestation = None
+        errors = verify_installed_package(observed_mounts=tuple(record[0] for record in records))
     if errors:
         for error in errors:
             print(error, file=sys.stderr)
         return 70
+    if nvidia_attestation is not None:
+        os.environ[NVIDIA_RUNTIME_ATTESTATION_ENV] = nvidia_attestation[1]
     os.execv(sys.executable, [sys.executable, "-I", "-m", "oims", *argv])
     return 70
 

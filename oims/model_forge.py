@@ -485,6 +485,8 @@ def forge_container_environment_errors(
         errors.append("OIMS_FORGE_SOURCE_COMMIT is not an exact lowercase Git commit")
     if not _is_revision(env.get("OIMS_FORGE_SOURCE_TREE")):
         errors.append("OIMS_FORGE_SOURCE_TREE is not an exact lowercase Git tree")
+    if require_probe_unlock and not _is_digest(env.get("OIMS_FORGE_NVIDIA_RUNTIME_SHA256")):
+        errors.append("OIMS_FORGE_NVIDIA_RUNTIME_SHA256 is not a pre-import runtime attestation")
     errors.extend(_container_source_attestation_errors(env))
     return tuple(errors)
 
@@ -1314,10 +1316,12 @@ def verify_forge_run(receipt_path: Path | str) -> dict[str, Any]:
         errors.append("Forge telemetry file is missing")
     else:
         try:
-            if telemetry_path.stat().st_size > MAX_TELEMETRY_BYTES:
-                raise ForgePlanError(f"Forge telemetry exceeds {MAX_TELEMETRY_BYTES} bytes")
-            telemetry_bytes = telemetry_path.read_bytes()
-        except (OSError, ForgePlanError) as exc:
+            telemetry_bytes = _read_bounded_bytes(
+                telemetry_path,
+                "Forge telemetry",
+                max_bytes=MAX_TELEMETRY_BYTES,
+            )
+        except ForgePlanError as exc:
             errors.append(str(exc))
         else:
             observed_hash = "sha256:" + hashlib.sha256(telemetry_bytes).hexdigest()
@@ -1968,6 +1972,11 @@ def inspect_physical_preflight(
             ),
         },
         "gpu": gpu,
+        "nvidia_runtime_sha256": (
+            env.get("OIMS_FORGE_NVIDIA_RUNTIME_SHA256")
+            if provenance is not None and _is_digest(env.get("OIMS_FORGE_NVIDIA_RUNTIME_SHA256"))
+            else None
+        ),
         "errors": errors,
         "governance_route": GOVERNANCE_ROUTE,
         "source_commit": provenance[0] if provenance is not None else None,

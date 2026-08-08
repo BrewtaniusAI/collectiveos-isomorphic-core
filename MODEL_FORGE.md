@@ -130,9 +130,12 @@ repeats that comparison as defense in depth. The entrypoint also reads `/proc/se
 installed package, attestation, verifier, standard executable/library roots, dynamic-loader
 configuration, the Python executable, or any file-backed process mapping. This protects Python
 dependencies, the native loader and shared libraries, system executables, the evidence, and the
-expected digest. Native runtime injection must be part of a separately attested toolchain rather
-than an unexpected bind mount. Compose refuses a working-tree context. This keeps the source
-recorded in Forge receipts bound to the exact source copied into the image.
+expected digest. The probe lane makes one narrow exception for NVIDIA Container Toolkit: exact
+read-only `nvidia-smi` and NVIDIA/CUDA shared-library file mounts are bounded, byte-hashed by this
+pre-import verifier, and their aggregate digest is carried into the physical-preflight receipt.
+An NVIDIA file already mapped before verification, a writable or non-regular file, an entire
+runtime-root mount, or any non-NVIDIA executable-runtime mount still fails closed. Compose refuses
+a working-tree context. This keeps source and runtime evidence bound to the exact inspected bytes.
 
 Docker documents GPU reservations through `deploy.resources.reservations.devices`; the Forge
 sets `capabilities: [gpu]` and an explicit device ID. See

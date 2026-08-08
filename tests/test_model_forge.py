@@ -10,6 +10,7 @@ from unittest.mock import patch
 import pytest
 import yaml
 
+import forge.oims_forge_entrypoint as forge_entrypoint
 import oims.model_forge as model_forge_module
 from forge.oims_forge_entrypoint import package_digest as entrypoint_package_digest
 from forge.oims_forge_entrypoint import protected_mount_errors, verify_installed_package
@@ -343,6 +344,31 @@ def test_telemetry_tampering_breaks_verification(tmp_path: Path) -> None:
     assert "Forge telemetry hash is invalid" in result["errors"]
 
 
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFO inputs require POSIX")
+def test_telemetry_replacement_is_descriptor_bounded(tmp_path: Path) -> None:
+    receipt = simulate_forge_run(load_example(), artifacts_dir=tmp_path)
+    run_dir = tmp_path / receipt["run_id"]
+    telemetry = run_dir / "telemetry.jsonl"
+    original_is_file = Path.is_file
+    replaced = False
+
+    def replace_after_regular_file_check(path: Path) -> bool:
+        nonlocal replaced
+        result = original_is_file(path)
+        if path == telemetry and result and not replaced:
+            path.unlink()
+            os.mkfifo(path)
+            replaced = True
+        return result
+
+    with patch.object(Path, "is_file", replace_after_regular_file_check):
+        result = verify_forge_run(run_dir / "receipt.json")
+
+    assert replaced is True
+    assert result["valid"] is False
+    assert "Forge telemetry must be a regular file" in result["errors"]
+
+
 def test_resealed_forged_telemetry_still_fails_semantic_replay(tmp_path: Path) -> None:
     receipt = simulate_forge_run(load_example(), artifacts_dir=tmp_path)
     run_dir = tmp_path / receipt["run_id"]
@@ -491,6 +517,7 @@ def test_probe_requires_exact_dual_unlock_before_device_inspection() -> None:
 def test_refused_probe_omits_unverified_source_provenance() -> None:
     environment = {
         "OIMS_FORGE_ENABLE_PROBE": "1",
+        "OIMS_FORGE_NVIDIA_RUNTIME_SHA256": "sha256:" + "d" * 64,
         "OIMS_FORGE_CONTAINER": "1",
         "HF_HUB_OFFLINE": "1",
         "TRANSFORMERS_OFFLINE": "1",
@@ -508,6 +535,7 @@ def test_refused_probe_omits_unverified_source_provenance() -> None:
     assert result["status"] == "REFUSED"
     assert result["source_commit"] is None
     assert result["source_tree"] is None
+    assert result["nvidia_runtime_sha256"] is None
 
 
 @pytest.mark.parametrize(
@@ -573,6 +601,7 @@ def test_probe_can_prove_a_locked_4090_sandbox_without_training(
     plan = probe_plan()
     environment = {
         "OIMS_FORGE_ENABLE_PROBE": "1",
+        "OIMS_FORGE_NVIDIA_RUNTIME_SHA256": "sha256:" + "d" * 64,
         "OIMS_FORGE_CONTAINER": "1",
         "HF_HUB_OFFLINE": "1",
         "TRANSFORMERS_OFFLINE": "1",
@@ -648,6 +677,7 @@ def test_probe_can_prove_a_locked_4090_sandbox_without_training(
         assert result["gpu"] is None
         assert expected_error in result["errors"]
     assert result["sandbox_observation"]["host_memory_available_bytes"] == 121 * 1024**3
+    assert result["nvidia_runtime_sha256"] == environment["OIMS_FORGE_NVIDIA_RUNTIME_SHA256"]
     assert result["training_started"] is False
     assert result["qmf_admissible"] is False
     run.assert_called_once()
@@ -937,6 +967,7 @@ def test_probe_requires_current_memory_headroom(
     rehash(plan)
     environment = {
         "OIMS_FORGE_ENABLE_PROBE": "1",
+        "OIMS_FORGE_NVIDIA_RUNTIME_SHA256": "sha256:" + "d" * 64,
         "OIMS_FORGE_CONTAINER": "1",
         "HF_HUB_OFFLINE": "1",
         "TRANSFORMERS_OFFLINE": "1",
@@ -992,6 +1023,7 @@ def test_probe_requires_process_level_output_write() -> None:
     plan = probe_plan()
     environment = {
         "OIMS_FORGE_ENABLE_PROBE": "1",
+        "OIMS_FORGE_NVIDIA_RUNTIME_SHA256": "sha256:" + "d" * 64,
         "OIMS_FORGE_CONTAINER": "1",
         "HF_HUB_OFFLINE": "1",
         "TRANSFORMERS_OFFLINE": "1",
@@ -1371,6 +1403,72 @@ def test_preimport_entrypoint_rejects_native_library_mounts(tmp_path: Path) -> N
     assert errors == ("Forge protected executable runtime contains an unexpected mount",)
 
 
+def test_preimport_entrypoint_allows_attested_nvidia_runtime_mounts(tmp_path: Path) -> None:
+    interpreter_prefix = tmp_path / "python"
+    package_root = interpreter_prefix / "lib" / "site-packages" / "oims"
+    package_root.mkdir(parents=True)
+    attestation = interpreter_prefix / "share" / "source.attestation"
+    attestation.parent.mkdir()
+    attestation.write_text("attestation\n", encoding="ascii")
+    verifier = interpreter_prefix / "libexec" / "entrypoint.py"
+    verifier.parent.mkdir()
+    verifier.write_text("verifier\n", encoding="utf-8")
+    runtime_root = Path("/usr/bin")
+    nvidia_smi = runtime_root / "nvidia-smi"
+
+    errors = protected_mount_errors(
+        package_root,
+        attestation,
+        verifier,
+        (Path("/"), nvidia_smi),
+        interpreter_prefix,
+        (runtime_root,),
+        (runtime_root,),
+        (nvidia_smi,),
+    )
+
+    assert errors == ()
+
+
+def test_nvidia_runtime_mount_attestation_hashes_read_only_regular_files(
+    tmp_path: Path,
+) -> None:
+    runtime_file = tmp_path / "nvidia-smi"
+    runtime_file.write_bytes(b"attested NVIDIA runtime fixture\n")
+    records = ((runtime_file, frozenset({"ro"})),)
+
+    with patch.object(forge_entrypoint, "_is_nvidia_runtime_path", return_value=True):
+        attestation = forge_entrypoint.nvidia_runtime_mount_attestation(records)
+
+    assert attestation is not None
+    assert attestation[0] == (runtime_file,)
+    assert attestation[1].startswith("sha256:")
+    assert len(attestation[1]) == 71
+
+
+def test_preimport_probe_passes_nvidia_attestation_to_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    digest = "sha256:" + "e" * 64
+    records = ((Path("/usr/bin/nvidia-smi"), frozenset({"ro"})),)
+    monkeypatch.delenv("OIMS_FORGE_NVIDIA_RUNTIME_SHA256", raising=False)
+
+    with (
+        patch.object(forge_entrypoint, "_mount_records", return_value=records),
+        patch.object(
+            forge_entrypoint,
+            "nvidia_runtime_mount_attestation",
+            return_value=((records[0][0],), digest),
+        ),
+        patch.object(forge_entrypoint, "verify_installed_package", return_value=()),
+        patch.object(forge_entrypoint.os, "execv", side_effect=OSError("exec intercepted")),
+        pytest.raises(OSError, match="exec intercepted"),
+    ):
+        forge_entrypoint.main(["forge", "probe"])
+
+    assert os.environ["OIMS_FORGE_NVIDIA_RUNTIME_SHA256"] == digest
+
+
 def test_oci_boundary_is_offline_unprivileged_and_non_training() -> None:
     compose = yaml.safe_load((ROOT / "forge" / "compose.yaml").read_text(encoding="utf-8"))
     for service_name in ("simulate", "verify", "probe"):
@@ -1424,6 +1522,8 @@ def test_oci_boundary_is_offline_unprivileged_and_non_training() -> None:
     assert "/proc/self/mountinfo" in entrypoint
     assert "/proc/self/maps" in entrypoint
     assert "NATIVE_RUNTIME_ROOTS" in entrypoint
+    assert "nvidia_runtime_mount_attestation" in entrypoint
+    assert "OIMS_FORGE_NVIDIA_RUNTIME_SHA256" in entrypoint
     assert "protected executable runtime contains an unexpected mount" in entrypoint
     launcher = (ROOT / "scripts" / "run_model_forge.ps1").read_text(encoding="utf-8")
     assert "status --porcelain=v1 --untracked-files=all" in launcher
