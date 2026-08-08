@@ -25,6 +25,8 @@ RUN test -f /opt/oims-forge-build/.oims-forge-source.attestation \
 RUN python -m pip install --no-cache-dir --no-compile --no-deps . \
     && install -D -m 0555 forge/oims_forge_entrypoint.py \
         /usr/local/libexec/oims-forge-entrypoint.py \
+    && install -D -m 0444 forge/nvidia-runtime.approved \
+        /usr/local/share/oims-forge/nvidia-runtime.approved \
     && python -I /usr/local/libexec/oims-forge-entrypoint.py --seal-attestation \
     && chmod 0444 /usr/local/share/oims-forge/source.attestation \
     && cd / \

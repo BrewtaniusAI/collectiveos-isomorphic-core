@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import stat
@@ -1503,16 +1504,34 @@ def test_nvidia_runtime_mount_attestation_hashes_read_only_regular_files(
     tmp_path: Path,
 ) -> None:
     runtime_file = tmp_path / "nvidia-smi"
-    runtime_file.write_bytes(b"attested NVIDIA runtime fixture\n")
+    runtime_bytes = b"attested NVIDIA runtime fixture\n"
+    runtime_file.write_bytes(runtime_bytes)
+    approvals = tmp_path / "nvidia-runtime.approved"
+    approvals.write_text(
+        f"{runtime_file}=sha256:{hashlib.sha256(runtime_bytes).hexdigest()}\n",
+        encoding="ascii",
+    )
     records = ((runtime_file, frozenset({"ro"})),)
 
     with patch.object(forge_entrypoint, "_is_nvidia_runtime_path", return_value=True):
-        attestation = forge_entrypoint.nvidia_runtime_mount_attestation(records)
+        attestation = forge_entrypoint.nvidia_runtime_mount_attestation(records, approvals)
 
     assert attestation is not None
     assert attestation[0] == (runtime_file,)
     assert attestation[1].startswith("sha256:")
     assert len(attestation[1]) == 71
+
+
+def test_nvidia_runtime_mount_attestation_rejects_unapproved_bytes(tmp_path: Path) -> None:
+    runtime_file = tmp_path / "nvidia-smi"
+    runtime_file.write_bytes(b"attacker supplied executable\n")
+    approvals = tmp_path / "nvidia-runtime.approved"
+    trusted_digest = hashlib.sha256(b"trusted NVIDIA executable\n").hexdigest()
+    approvals.write_text(f"{runtime_file}=sha256:{trusted_digest}\n", encoding="ascii")
+    records = ((runtime_file, frozenset({"ro"})),)
+
+    with patch.object(forge_entrypoint, "_is_nvidia_runtime_path", return_value=True):
+        assert forge_entrypoint.nvidia_runtime_mount_attestation(records, approvals) is None
 
 
 @pytest.mark.parametrize(
@@ -1609,9 +1628,11 @@ def test_oci_boundary_is_offline_unprivileged_and_non_training() -> None:
     assert "/proc/self/maps" in entrypoint
     assert "NATIVE_RUNTIME_ROOTS" in entrypoint
     assert "nvidia_runtime_mount_attestation" in entrypoint
+    assert "nvidia_runtime_approvals" in entrypoint
     assert "OIMS_FORGE_NVIDIA_RUNTIME_SHA256" in entrypoint
     assert "OIMS_FORGE_NVIDIA_SMI_PATH" in entrypoint
     assert "protected executable runtime contains an unexpected mount" in entrypoint
+    assert "nvidia-runtime.approved" in containerfile
     launcher = (ROOT / "scripts" / "run_model_forge.ps1").read_text(encoding="utf-8")
     assert "status --porcelain=v1 --untracked-files=all" in launcher
     assert "ls-files -v" in launcher

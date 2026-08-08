@@ -133,8 +133,12 @@ configuration, the Python executable, or any file-backed process mapping. This p
 dependencies, the native loader and shared libraries, system executables, the evidence, and the
 expected digest. The probe lane makes one narrow exception for NVIDIA Container Toolkit: exact
 read-only `nvidia-smi`, `nvidia-debugdump`, `nvidia-persistenced`, CUDA MPS utility, and
-NVIDIA/CUDA shared-library file mounts are bounded, byte-hashed by this pre-import verifier, and
-their aggregate digest is carried into the physical-preflight receipt. The verifier also exports
+NVIDIA/CUDA shared-library file mounts are bounded and byte-hashed by this pre-import verifier.
+Every individual path and digest must match the source-controlled
+`forge/nvidia-runtime.approved` manifest embedded in the clean, commit-exported image; the checked-in
+comment-only manifest deliberately denies all physical probes until maintainers commit the exact
+trusted Toolkit/driver file hashes and rebuild. The authenticated aggregate digest is carried into
+the physical-preflight receipt. The verifier also exports
 the single attested absolute `nvidia-smi` mount path, and the probe invokes that path directly so
 an executable earlier on caller-controlled `PATH` cannot substitute the inspected utility. The
 child receives only a fixed C-locale environment, so inherited dynamic-loader overrides cannot
@@ -164,7 +168,9 @@ sets `capabilities: [gpu]` and an explicit device ID. See
    cgroup swap is zero and the PID limit is no greater than 512.
 9. Observed host `MemTotal` within a bounded 2 GiB reserved-memory tolerance of the declared
    physical host domain, plus enough currently available host RAM for the peak ceiling.
-10. A parseable RTX 4090 `nvidia-smi` record with matching VRAM capacity, enough currently
+10. Every injected NVIDIA utility and library must match its exact path and SHA-256 entry in the
+    source-controlled `forge/nvidia-runtime.approved` manifest.
+11. A parseable RTX 4090 `nvidia-smi` record with matching VRAM capacity, enough currently
     available VRAM, and temperature headroom for the plan ceilings.
 
 The checked-in probe plan hash is

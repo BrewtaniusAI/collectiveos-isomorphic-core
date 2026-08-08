@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 ATTESTATION_PATH = Path("/usr/local/share/oims-forge/source.attestation")
+NVIDIA_RUNTIME_APPROVALS_PATH = Path("/usr/local/share/oims-forge/nvidia-runtime.approved")
 MOUNTINFO_PATH = Path("/proc/self/mountinfo")
 PROCESS_MAPS_PATH = Path("/proc/self/maps")
 NATIVE_RUNTIME_ROOTS = (
@@ -42,6 +43,7 @@ NVIDIA_RUNTIME_EXECUTABLES = frozenset(
 MAX_NVIDIA_RUNTIME_MOUNTS = 256
 MAX_NVIDIA_RUNTIME_BYTES = 2 * 1024**3
 MAX_ATTESTATION_BYTES = 256
+MAX_NVIDIA_APPROVAL_BYTES = 128 * 1024
 
 
 def _is_revision(value: object) -> bool:
@@ -104,18 +106,18 @@ def installed_package_root() -> Path | None:
     return root
 
 
-def _read_values(path: Path) -> dict[str, str] | None:
+def _read_bounded_regular_bytes(path: Path, max_bytes: int) -> bytes | None:
     descriptor: int | None = None
     try:
         flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
         descriptor = os.open(path, flags)
         metadata = os.fstat(descriptor)
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > MAX_ATTESTATION_BYTES:
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > max_bytes:
             return None
         payload = bytearray()
-        while chunk := os.read(descriptor, MAX_ATTESTATION_BYTES + 1 - len(payload)):
+        while chunk := os.read(descriptor, max_bytes + 1 - len(payload)):
             payload.extend(chunk)
-            if len(payload) > MAX_ATTESTATION_BYTES:
+            if len(payload) > max_bytes:
                 return None
         final_metadata = os.fstat(descriptor)
         if (
@@ -126,12 +128,22 @@ def _read_values(path: Path) -> dict[str, str] | None:
             or final_metadata.st_mtime_ns != metadata.st_mtime_ns
         ):
             return None
-        lines = payload.decode("ascii").splitlines()
-    except (OSError, UnicodeDecodeError):
+        return bytes(payload)
+    except (OSError, OverflowError):
         return None
     finally:
         if descriptor is not None:
             os.close(descriptor)
+
+
+def _read_values(path: Path) -> dict[str, str] | None:
+    payload = _read_bounded_regular_bytes(path, MAX_ATTESTATION_BYTES)
+    if payload is None:
+        return None
+    try:
+        lines = payload.decode("ascii").splitlines()
+    except UnicodeDecodeError:
+        return None
     values: dict[str, str] = {}
     for line in lines:
         key, separator, value = line.partition("=")
@@ -236,9 +248,43 @@ def _is_nvidia_runtime_path(path: Path) -> bool:
     )
 
 
+def nvidia_runtime_approvals(
+    path: Path = NVIDIA_RUNTIME_APPROVALS_PATH,
+) -> dict[Path, str] | None:
+    payload = _read_bounded_regular_bytes(path, MAX_NVIDIA_APPROVAL_BYTES)
+    if payload is None:
+        return None
+    try:
+        lines = payload.decode("ascii").splitlines()
+    except UnicodeDecodeError:
+        return None
+    approvals: dict[Path, str] = {}
+    for line in lines:
+        if not line or line.startswith("#"):
+            continue
+        target, separator, digest = line.partition("=")
+        candidate = Path(target)
+        if (
+            not separator
+            or candidate in approvals
+            or not candidate.is_absolute()
+            or str(candidate) != target
+            or ".." in candidate.parts
+            or not _is_nvidia_runtime_path(candidate)
+            or not _is_digest(digest)
+        ):
+            return None
+        approvals[candidate] = digest
+    return approvals or None
+
+
 def nvidia_runtime_mount_attestation(
     records: tuple[tuple[Path, frozenset[str]], ...],
+    approvals_path: Path = NVIDIA_RUNTIME_APPROVALS_PATH,
 ) -> tuple[tuple[Path, ...], str] | None:
+    approvals = nvidia_runtime_approvals(approvals_path)
+    if approvals is None:
+        return None
     candidates = sorted(
         (record for record in records if _is_nvidia_runtime_path(record[0])),
         key=lambda record: str(record[0]),
@@ -264,6 +310,7 @@ def nvidia_runtime_mount_attestation(
             digest.update(len(encoded_path).to_bytes(8, "big"))
             digest.update(encoded_path)
             digest.update(metadata.st_size.to_bytes(8, "big"))
+            file_digest = hashlib.sha256()
             file_bytes = 0
             while chunk := os.read(descriptor, 1024 * 1024):
                 file_bytes += len(chunk)
@@ -271,6 +318,7 @@ def nvidia_runtime_mount_attestation(
                 if total_bytes > MAX_NVIDIA_RUNTIME_BYTES:
                     return None
                 digest.update(chunk)
+                file_digest.update(chunk)
             final_metadata = os.fstat(descriptor)
             if (
                 file_bytes != metadata.st_size
@@ -279,6 +327,8 @@ def nvidia_runtime_mount_attestation(
                 or final_metadata.st_size != metadata.st_size
                 or final_metadata.st_mtime_ns != metadata.st_mtime_ns
             ):
+                return None
+            if approvals.get(path) != "sha256:" + file_digest.hexdigest():
                 return None
         except (OSError, OverflowError, UnicodeError):
             return None
@@ -303,6 +353,7 @@ def protected_mount_errors(
     native_runtime_paths: tuple[Path, ...] | None = None,
     native_runtime_roots: tuple[Path, ...] | None = None,
     allowed_native_mounts: tuple[Path, ...] = (),
+    nvidia_approvals_path: Path = NVIDIA_RUNTIME_APPROVALS_PATH,
 ) -> tuple[str, ...]:
     runtime_paths = (
         native_runtime_paths if native_runtime_paths is not None else _native_runtime_paths()
@@ -315,11 +366,17 @@ def protected_mount_errors(
     if runtime_roots is None:
         return ("Forge native executable runtime cannot be verified",)
     try:
+        approval_targets = (
+            (nvidia_approvals_path.resolve(strict=True),)
+            if nvidia_approvals_path.exists() or nvidia_approvals_path.is_symlink()
+            else ()
+        )
         core_protected = (
             package_root.resolve(strict=True),
             attestation_path.resolve(strict=True),
             (verifier_path or Path(__file__)).resolve(strict=True),
             (interpreter_prefix or Path(sys.prefix)).resolve(strict=True),
+            *approval_targets,
             *(target for target in runtime_paths if target not in runtime_roots),
         )
     except (OSError, RuntimeError):

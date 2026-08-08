@@ -1,0 +1,2 @@
+# Default deny: commit one absolute-path=sha256:<64 lowercase hex> line for every trusted
+# NVIDIA Container Toolkit utility and driver library before enabling physical probe mode.
