@@ -332,7 +332,14 @@ def _is_repository_id(value: object) -> bool:
         return False
     owner, name = value.split("/", 1)
     allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-")
-    return bool(owner and name) and set(owner) <= allowed and set(name) <= allowed
+    alphanumeric = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+    return (
+        bool(owner and name)
+        and owner[0] in alphanumeric
+        and name[0] in alphanumeric
+        and set(owner) <= allowed
+        and set(name) <= allowed
+    )
 
 
 def _is_container_path(value: object, prefix: str) -> bool:

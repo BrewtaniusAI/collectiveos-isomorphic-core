@@ -119,6 +119,26 @@ def test_plan_hash_and_immutable_base_rollback_are_recomputed() -> None:
     assert "plan_hash does not match the canonical plan body" in errors
 
 
+@pytest.mark.parametrize(
+    "repository_id",
+    [
+        "-owner/repo",
+        ".owner/repo",
+        "_owner/repo",
+        "owner/-repo",
+        "owner/.repo",
+        "owner/_repo",
+    ],
+)
+def test_repository_segments_must_start_alphanumerically(repository_id: str) -> None:
+    plan = load_example()
+    qmf = plan["qmf_contract"]
+    assert isinstance(qmf, dict)
+    qmf["output_repository_id"] = repository_id
+    rehash(plan)
+    assert "qmf_contract.output_repository_id is invalid" in validate_forge_plan(plan)
+
+
 def test_physical_memory_domains_cannot_be_aggregated_or_aliased() -> None:
     plan = load_example()
     resources = plan["resources"]
