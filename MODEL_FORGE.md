@@ -180,11 +180,12 @@ context, sandbox setting, or bind mount outside the checked-in four-mount policy
 Python. The host check covers the complete rendered service field allowlist, exact PID, RAM, swap,
 shared-memory, and tmpfs limits, and the probe's exact single-device NVIDIA reservation with no
 additional capability or device field. Rendered Linux paths are compared case-sensitively. The
-launcher records OS filesystem identities for the plan and all three host directories, then
-re-resolves and rechecks both those identities and output/input disjointness after the image build
-and immediately before execution. It then executes that exact rendered snapshot from memory rather
-than reparsing the mutable Compose path. This keeps source and runtime evidence bound to the exact
-inspected host objects and bytes.
+launcher records OS filesystem identities and descriptor-bound canonical paths for the plan and all
+three host directories, then re-resolves and rechecks both those snapshots after the image build.
+Output/input disjointness is recomputed from the current canonical paths immediately before
+execution, so moving an identity-preserving object behind a symlink or junction fails closed. It
+then executes that exact rendered snapshot from memory rather than reparsing the mutable Compose
+path. This keeps source and runtime evidence bound to the exact inspected host objects and bytes.
 
 Docker documents GPU reservations through `deploy.resources.reservations.devices`; the Forge
 sets `capabilities: [gpu]` and an explicit device ID. See

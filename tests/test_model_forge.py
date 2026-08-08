@@ -2371,15 +2371,19 @@ def test_launcher_validates_complete_rendered_resource_policy() -> None:
 def test_launcher_binds_case_sensitive_mount_paths_and_revalidates_identity() -> None:
     launcher = (ROOT / "scripts" / "run_model_forge.ps1").read_text(encoding="utf-8")
 
-    assert "function Get-ForgePathIdentity" in launcher
+    assert "function Get-ForgePathSnapshot" in launcher
     assert "GetFileInformationByHandle" in launcher
+    assert "GetFinalPathNameByHandle" in launcher
     assert 'EntryPoint = "statx"' in launcher
+    assert '"/proc/self/fd/" + fileDescriptor' in launcher
     assert "function Assert-ForgeHostMountIdentity" in launcher
     assert "$CurrentPath -cne $ExpectedPath" in launcher
+    assert "$CurrentSnapshot.CanonicalPath -cne" in launcher
+    assert "-Left $CurrentCanonicalPaths['Output']" in launcher
     assert "$Volume.source -cne" in launcher
     assert "$ExpectedMountTargets -ccontains $Target" in launcher
     assert "Compare-Object $ExpectedServices $ObservedServices -CaseSensitive" in launcher
-    first_identity = launcher.index("$ExpectedHostIdentities[$Name] = Get-ForgePathIdentity")
+    first_identity = launcher.index("$ExpectedHostSnapshots[$Name] = Get-ForgePathSnapshot")
     build = launcher.index("$ForgeImageId = Invoke-ForgeImageBuild `")
     revalidation = launcher.index("Assert-ForgeHostMountIdentity `", build)
     execution = launcher.index("switch ($Mode)", revalidation)

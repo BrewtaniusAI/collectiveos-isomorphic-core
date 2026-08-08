@@ -57,7 +57,7 @@ function Test-PathsOverlap {
     )
 }
 
-function Get-ForgePathIdentity {
+function Get-ForgePathSnapshot {
     param([Parameter(Mandatory = $true)][string]$Path)
 
     if (-not ('OimsForgePathIdentity' -as [type])) {
@@ -65,7 +65,20 @@ function Get-ForgePathIdentity {
 using System;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using System.Text;
 using Microsoft.Win32.SafeHandles;
+
+public sealed class OimsForgePathSnapshot
+{
+    public string Identity { get; private set; }
+    public string CanonicalPath { get; private set; }
+
+    public OimsForgePathSnapshot(string identity, string canonicalPath)
+    {
+        Identity = identity;
+        CanonicalPath = canonicalPath;
+    }
+}
 
 public static class OimsForgePathIdentity
 {
@@ -74,7 +87,10 @@ public static class OimsForgePathIdentity
     private const uint FileShareDelete = 0x00000004;
     private const uint OpenExisting = 3;
     private const uint FileFlagBackupSemantics = 0x02000000;
-    private const int AtFdcwd = -100;
+    private const int LinuxOpenPath = 0x00200000;
+    private const int LinuxOpenCloseOnExec = 0x00080000;
+    private const int AtEmptyPath = 0x00001000;
+    private const uint StatxMode = 0x00000002;
     private const uint StatxIno = 0x00000100;
     private const uint StatxMountId = 0x00001000;
 
@@ -122,6 +138,23 @@ public static class OimsForgePathIdentity
         out ByHandleFileInformation information
     );
 
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetFinalPathNameByHandle(
+        SafeFileHandle handle,
+        StringBuilder path,
+        uint pathLength,
+        uint flags
+    );
+
+    [DllImport("libc", EntryPoint = "open", SetLastError = true)]
+    private static extern int LinuxOpen(string path, int flags);
+
+    [DllImport("libc", EntryPoint = "readlink", SetLastError = true)]
+    private static extern IntPtr LinuxReadLink(string path, byte[] buffer, UIntPtr bufferSize);
+
+    [DllImport("libc", EntryPoint = "close", SetLastError = true)]
+    private static extern int LinuxClose(int fileDescriptor);
+
     [DllImport("libc", EntryPoint = "statx", SetLastError = true)]
     private static extern int Statx(
         int directoryFileDescriptor,
@@ -131,7 +164,7 @@ public static class OimsForgePathIdentity
         out StatxBuffer buffer
     );
 
-    public static string Get(string path)
+    public static OimsForgePathSnapshot Capture(string path)
     {
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
@@ -150,52 +183,106 @@ public static class OimsForgePathIdentity
                 if (!GetFileInformationByHandle(handle, out information))
                     throw new Win32Exception(Marshal.GetLastWin32Error());
                 ulong index = ((ulong)information.FileIndexHigh << 32) | information.FileIndexLow;
-                return String.Format("windows:{0:x8}:{1:x16}", information.VolumeSerialNumber, index);
+                StringBuilder canonicalPath = new StringBuilder(32768);
+                uint canonicalLength = GetFinalPathNameByHandle(
+                    handle,
+                    canonicalPath,
+                    (uint)canonicalPath.Capacity,
+                    0
+                );
+                if (canonicalLength == 0 || canonicalLength >= (uint)canonicalPath.Capacity)
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                string identity = String.Format(
+                    "windows:{0:x8}:{1:x16}",
+                    information.VolumeSerialNumber,
+                    index
+                );
+                return new OimsForgePathSnapshot(identity, canonicalPath.ToString());
             }
         }
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
         {
-            StatxBuffer buffer;
-            int result = Statx(AtFdcwd, path, 0, StatxIno | StatxMountId, out buffer);
-            if (result != 0)
+            int fileDescriptor = LinuxOpen(path, LinuxOpenPath | LinuxOpenCloseOnExec);
+            if (fileDescriptor < 0)
                 throw new Win32Exception(Marshal.GetLastWin32Error());
-            if ((buffer.Mask & StatxIno) == 0 || (buffer.Mask & StatxMountId) == 0)
-                throw new InvalidOperationException("statx did not return inode and mount identities.");
-            return String.Format(
-                "linux:{0:x4}:{1:x8}:{2:x8}:{3:x16}:{4:x16}",
-                buffer.Mode,
-                buffer.DeviceMajor,
-                buffer.DeviceMinor,
-                buffer.Inode,
-                buffer.MountId
-            );
+            try
+            {
+                StatxBuffer buffer;
+                uint requested = StatxMode | StatxIno | StatxMountId;
+                int result = Statx(fileDescriptor, "", AtEmptyPath, requested, out buffer);
+                if (result != 0)
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                if ((buffer.Mask & requested) != requested)
+                    throw new InvalidOperationException(
+                        "statx did not return mode, inode, and mount identities."
+                    );
+                byte[] canonicalBuffer = new byte[32768];
+                IntPtr readLength = LinuxReadLink(
+                    "/proc/self/fd/" + fileDescriptor,
+                    canonicalBuffer,
+                    (UIntPtr)(uint)canonicalBuffer.Length
+                );
+                long canonicalLength = readLength.ToInt64();
+                if (canonicalLength <= 0 || canonicalLength >= canonicalBuffer.Length)
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                string canonicalPath = Encoding.UTF8.GetString(
+                    canonicalBuffer,
+                    0,
+                    (int)canonicalLength
+                );
+                if (canonicalPath.EndsWith(" (deleted)", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Host mount object was unlinked.");
+                string identity = String.Format(
+                    "linux:{0:x4}:{1:x8}:{2:x8}:{3:x16}:{4:x16}",
+                    buffer.Mode,
+                    buffer.DeviceMajor,
+                    buffer.DeviceMinor,
+                    buffer.Inode,
+                    buffer.MountId
+                );
+                return new OimsForgePathSnapshot(identity, canonicalPath);
+            }
+            finally
+            {
+                if (LinuxClose(fileDescriptor) != 0)
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
         }
         throw new PlatformNotSupportedException("Model Forge host identity requires Windows or Linux.");
     }
 }
 '@ | Out-Null
     }
-    return [OimsForgePathIdentity]::Get($Path)
+    return [OimsForgePathIdentity]::Capture($Path)
 }
 
 function Assert-ForgeHostMountIdentity {
     param(
         [Parameter(Mandatory = $true)][hashtable]$ExpectedPaths,
-        [Parameter(Mandatory = $true)][hashtable]$ExpectedIdentities
+        [Parameter(Mandatory = $true)][hashtable]$ExpectedSnapshots
     )
 
+    $CurrentCanonicalPaths = @{}
     foreach ($Name in $ExpectedPaths.Keys) {
         $ExpectedPath = [string]$ExpectedPaths[$Name]
+        $ExpectedSnapshot = $ExpectedSnapshots[$Name]
         $CurrentPath = (Resolve-Path -LiteralPath $ExpectedPath).Path
+        $CurrentSnapshot = Get-ForgePathSnapshot $CurrentPath
         if (
             $CurrentPath -cne $ExpectedPath -or
-            (Get-ForgePathIdentity $CurrentPath) -cne [string]$ExpectedIdentities[$Name]
+            [string]$CurrentSnapshot.Identity -cne [string]$ExpectedSnapshot.Identity -or
+            [string]$CurrentSnapshot.CanonicalPath -cne [string]$ExpectedSnapshot.CanonicalPath
         ) {
             throw "Model Forge host mount identity changed before container launch: $Name"
         }
+        $CurrentCanonicalPaths[$Name] = [string]$CurrentSnapshot.CanonicalPath
     }
     foreach ($ProtectedName in @('Plan', 'BaseModel', 'Dataset')) {
-        if (Test-PathsOverlap -Left $ExpectedPaths['Output'] -Right $ExpectedPaths[$ProtectedName]) {
+        if (
+            Test-PathsOverlap `
+                -Left $CurrentCanonicalPaths['Output'] `
+                -Right $CurrentCanonicalPaths[$ProtectedName]
+        ) {
             throw 'OutputDir must remain disjoint from Plan, BaseModelDir, and DatasetDir.'
         }
     }
@@ -479,9 +566,9 @@ $ExpectedHostPaths = @{
     'Dataset' = $DatasetPath
     'Output' = $OutputPath
 }
-$ExpectedHostIdentities = @{}
+$ExpectedHostSnapshots = @{}
 foreach ($Name in $ExpectedHostPaths.Keys) {
-    $ExpectedHostIdentities[$Name] = Get-ForgePathIdentity $ExpectedHostPaths[$Name]
+    $ExpectedHostSnapshots[$Name] = Get-ForgePathSnapshot $ExpectedHostPaths[$Name]
 }
 
 $ContainerReceipt = $null
@@ -759,7 +846,7 @@ try {
     $ExecutionCompose = $ResolvedCompose | ConvertTo-Json -Depth 100 -Compress
     Assert-ForgeHostMountIdentity `
         -ExpectedPaths $ExpectedHostPaths `
-        -ExpectedIdentities $ExpectedHostIdentities
+        -ExpectedSnapshots $ExpectedHostSnapshots
 
     switch ($Mode) {
         'Validate' {
