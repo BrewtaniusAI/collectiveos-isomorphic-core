@@ -186,13 +186,16 @@ three host directories, then re-resolves and rechecks both those snapshots after
 Output/input disjointness is recomputed from the current canonical paths immediately before
 execution. Exact backing device/inode identity and component-safe backing-tree coordinates derived
 from the kernel mount ID, mount root, and path within that mount are compared independently of the
-visible Linux mountpoint. The coordinate set follows authenticated mount-parent relationships and
-includes every nested filesystem recursively visible beneath each source, so equal, ancestor,
-descendant, and cross-submount aliases through distinct bind mounts all fail closed. Moving an
-identity-preserving object behind a symlink or junction therefore fails as well. It
-then rebinds every Linux mount source to the held launcher's `/proc/<pid>/fd/<fd>` object; on
+visible Linux mountpoint. A memoized, globally bounded mount-parent traversal includes every nested
+filesystem visible beneath each source, so equal, ancestor, descendant, and cross-submount aliases
+through distinct bind mounts all fail closed without quadratic work. Moving an identity-preserving
+object behind a symlink or junction therefore fails as well. It then rebinds every Linux mount
+source to the held launcher's `/proc/<pid>/fd/<fd>` object; on
 Windows, non-delete-sharing filesystem handles retain the verified names until Compose returns.
-Those leases close the final check-to-bind race. The launcher executes that exact rendered snapshot
+The validated snapshot is translated to an argument-array `docker run` whose four `--mount`
+arguments set Engine-level `bind-recursive=disabled`; late descendant mounts are therefore excluded
+at the bind operation itself. Those leases and nonrecursive binds close the final check-to-bind
+race. The launcher executes that exact rendered policy
 from memory rather than reparsing the mutable Compose path. This keeps source and runtime evidence
 bound to the exact inspected host objects and bytes.
 

@@ -2439,7 +2439,9 @@ def test_launcher_enforces_process_and_mount_policy_before_container_start() -> 
     ):
         assert f"'{target}'" in launcher
     assert launcher.index("config --format json") < launcher.index("switch ($Mode)")
-    assert launcher.index("switch ($Mode)") < launcher.index("run --rm")
+    assert launcher.index("switch ($Mode)") < launcher.index(
+        "Invoke-ForgeDockerRun `", launcher.index("switch ($Mode)")
+    )
 
 
 def test_launcher_validates_complete_rendered_resource_policy() -> None:
@@ -2526,6 +2528,18 @@ def test_launcher_rejects_backing_aliases_across_nested_submounts() -> None:
     assert "foreach ($RightPath in $Right)" in launcher
 
 
+def test_launcher_bounds_and_memoizes_mount_parent_traversal() -> None:
+    launcher = (ROOT / "scripts" / "run_model_forge.ps1").read_text(encoding="utf-8")
+
+    assert "MaximumMountParentTraversals" in launcher
+    assert "Dictionary<ulong, bool> ancestryCache" in launcher
+    assert "ref int remainingTraversals" in launcher
+    assert "ancestryCache.TryGetValue(current.MountId, out result)" in launcher
+    assert "remainingTraversals -= 1" in launcher
+    assert "remainingTraversals < 0" in launcher
+    assert "ancestryCache[mountId] = result" in launcher
+
+
 def test_launcher_executes_validated_snapshot_without_ambient_mode_inputs() -> None:
     launcher = (ROOT / "scripts" / "run_model_forge.ps1").read_text(encoding="utf-8")
     receipt_clear = "[Environment]::SetEnvironmentVariable('FORGE_RECEIPT', $null, 'Process')"
@@ -2535,14 +2549,30 @@ def test_launcher_executes_validated_snapshot_without_ambient_mode_inputs() -> N
 
     assert receipt_clear in launcher
     assert probe_clear in launcher
-    assert "$ExecutionCompose | & docker compose -f - run" in launcher
-    assert "$ExecutionCompose | & docker compose -f - --profile probe run" in launcher
+    assert "function Invoke-ForgeDockerRun" in launcher
+    assert "& docker @DockerArguments" in launcher
+    assert "docker compose -f - run" not in launcher
     assert "docker compose -f $ComposePath run" not in launcher
     assert launcher.index(receipt_clear) < launcher.index("config --format json")
     assert launcher.index(probe_clear) < launcher.index("config --format json")
-    assert launcher.index("config --format json") < launcher.index(
-        "$ExecutionCompose | & docker compose -f - run"
+    invocation = launcher.index("Invoke-ForgeDockerRun `", launcher.index("$SelectedService ="))
+    assert launcher.index("config --format json") < invocation
+
+
+def test_launcher_disables_recursive_binds_at_the_docker_engine_boundary() -> None:
+    launcher = (ROOT / "scripts" / "run_model_forge.ps1").read_text(encoding="utf-8")
+
+    assert (
+        '"type=bind,src=$Source,dst=$([string]$Volume.target),bind-recursive=disabled"' in launcher
     )
+    assert "$DockerArguments.Add('--mount')" in launcher
+    assert "$DockerArguments.Add($Mount)" in launcher
+    assert "$Source.Contains(',')" in launcher
+    assert "$Source.Contains([char]0)" in launcher
+    assert "& docker @DockerArguments" in launcher
+    revalidation = launcher.index("Assert-ForgeHostMountIdentity `")
+    invocation = launcher.index("Invoke-ForgeDockerRun `", revalidation)
+    assert revalidation < invocation
 
 
 def test_launcher_rejects_writable_output_aliases_of_protected_inputs() -> None:
@@ -2560,7 +2590,7 @@ def test_launcher_rejects_writable_output_aliases_of_protected_inputs() -> None:
     assert "Verify requires -Receipt" in launcher
     assert "Verify requires Receipt to remain beneath OutputDir" in launcher
     assert "$env:FORGE_RECEIPT = $ContainerReceipt" in launcher
-    assert "run --rm verify" in launcher
+    assert "$SelectedServiceName = $Mode.ToLowerInvariant()" in launcher
     runtime_lock = (ROOT / "requirements" / "forge-runtime.lock").read_text(encoding="utf-8")
     assert "torch" not in runtime_lock.lower()
     assert "transformers" not in runtime_lock.lower()
@@ -2605,8 +2635,9 @@ def test_launcher_runs_the_exact_built_image_id() -> None:
     assert "$ImageId -notmatch '^sha256:[0-9a-f]{64}$'" in launcher
     assert "$ForgeImageId = Invoke-ForgeImageBuild `" in launcher
     assert "$ResolvedCompose.services.$ServiceName.image = $ForgeImageId" in launcher
-    assert "$ExecutionCompose = $ResolvedCompose | ConvertTo-Json -Depth 100 -Compress" in launcher
-    assert "$ExecutionCompose | & docker compose -f - run" in launcher
+    assert "$DockerArguments.Add([string]$Service.image)" in launcher
+    assert "Invoke-ForgeDockerRun `" in launcher
+    assert "$ExecutionCompose" not in launcher
     assert "$ComposeOutput | & docker compose -f - run" not in launcher
 
 

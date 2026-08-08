@@ -169,6 +169,7 @@ public static class OimsForgePathIdentity
     private const int MaximumMountInfoLines = 65536;
     private const int MaximumMountInfoLineLength = 1048576;
     private const int MaximumBackingTreePaths = 1024;
+    private const int MaximumMountParentTraversals = 131072;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct ByHandleFileInformation
@@ -293,19 +294,41 @@ public static class OimsForgePathIdentity
     private static bool IsMountDescendant(
         LinuxMountRecord candidate,
         ulong ancestorId,
-        Dictionary<ulong, LinuxMountRecord> records
+        Dictionary<ulong, LinuxMountRecord> records,
+        Dictionary<ulong, bool> ancestryCache,
+        ref int remainingTraversals
     )
     {
         HashSet<ulong> observed = new HashSet<ulong>();
+        List<ulong> traversed = new List<ulong>();
         LinuxMountRecord current = candidate;
-        while (observed.Add(current.MountId))
+        bool result;
+        while (true)
         {
+            if (ancestryCache.TryGetValue(current.MountId, out result))
+                break;
+            if (!observed.Add(current.MountId))
+                throw new InvalidOperationException("Host mount topology contains a parent cycle.");
+            remainingTraversals -= 1;
+            if (remainingTraversals < 0)
+                throw new InvalidOperationException(
+                    "Host mount parent traversal exceeds the supported bound."
+                );
+            traversed.Add(current.MountId);
             if (current.ParentId == ancestorId)
-                return true;
+            {
+                result = true;
+                break;
+            }
             if (!records.TryGetValue(current.ParentId, out current))
-                return false;
+            {
+                result = false;
+                break;
+            }
         }
-        throw new InvalidOperationException("Host mount topology contains a parent cycle.");
+        foreach (ulong mountId in traversed)
+            ancestryCache[mountId] = result;
+        return result;
     }
 
     private static LinuxBackingTree LinuxBackingTreePaths(
@@ -402,12 +425,20 @@ public static class OimsForgePathIdentity
             backingPath
         );
         HashSet<string> paths = new HashSet<string>(StringComparer.Ordinal) { directPath };
+        Dictionary<ulong, bool> ancestryCache = new Dictionary<ulong, bool>();
+        int remainingTraversals = MaximumMountParentTraversals;
         foreach (LinuxMountRecord record in orderedRecords)
         {
             if (
                 record.MountId == directRecord.MountId ||
-                !IsMountDescendant(record, directRecord.MountId, records) ||
-                !IsContainedPath(canonicalPath, record.MountPoint, true)
+                !IsContainedPath(canonicalPath, record.MountPoint, true) ||
+                !IsMountDescendant(
+                    record,
+                    directRecord.MountId,
+                    records,
+                    ancestryCache,
+                    ref remainingTraversals
+                )
             )
                 continue;
             paths.Add(LinuxBackingCoordinate(record.DeviceMajor, record.DeviceMinor, record.Root));
@@ -794,6 +825,94 @@ function Invoke-ForgeImageBuild {
             $GitProcess.Dispose()
         }
         $DockerProcess.Dispose()
+    }
+}
+
+function Invoke-ForgeDockerRun {
+    param(
+        [Parameter(Mandatory = $true)][object]$Service,
+        [Parameter(Mandatory = $true)][string[]]$Command,
+        [Parameter(Mandatory = $true)][string]$ModeName,
+        [switch]$EnableGpu
+    )
+
+    $DockerArguments = [System.Collections.Generic.List[string]]::new()
+    foreach ($Argument in @('--rm', '--pull', [string]$Service.pull_policy)) {
+        $DockerArguments.Add($Argument)
+    }
+    if ([bool]$Service.read_only) {
+        $DockerArguments.Add('--read-only')
+    }
+    $DockerArguments.Add('--user')
+    $DockerArguments.Add([string]$Service.user)
+    $DockerArguments.Add('--network')
+    $DockerArguments.Add([string]$Service.network_mode)
+    $DockerArguments.Add('--pids-limit')
+    $DockerArguments.Add([string]$Service.pids_limit)
+    $DockerArguments.Add('--memory')
+    $DockerArguments.Add([string]$Service.mem_limit)
+    $DockerArguments.Add('--memory-swap')
+    $DockerArguments.Add([string]$Service.memswap_limit)
+    $DockerArguments.Add('--shm-size')
+    $DockerArguments.Add([string]$Service.shm_size)
+    foreach ($Capability in @($Service.cap_drop)) {
+        $DockerArguments.Add('--cap-drop')
+        $DockerArguments.Add([string]$Capability)
+    }
+    foreach ($SecurityOption in @($Service.security_opt)) {
+        $DockerArguments.Add('--security-opt')
+        $DockerArguments.Add([string]$SecurityOption)
+    }
+    foreach ($Tmpfs in @($Service.tmpfs)) {
+        $DockerArguments.Add('--tmpfs')
+        $DockerArguments.Add([string]$Tmpfs)
+    }
+    foreach ($EnvironmentProperty in @(
+        $Service.environment.PSObject.Properties | Sort-Object Name
+    )) {
+        $DockerArguments.Add('--env')
+        $DockerArguments.Add(
+            "{0}={1}" -f $EnvironmentProperty.Name, [string]$EnvironmentProperty.Value
+        )
+    }
+    foreach ($Volume in @($Service.volumes)) {
+        $Source = [string]$Volume.source
+        if (
+            $Source.Contains(',') -or
+            $Source.Contains('"') -or
+            $Source.Contains("`r") -or
+            $Source.Contains("`n") -or
+            $Source.Contains([char]0)
+        ) {
+            throw 'Model Forge bind source cannot be represented as an exact Docker --mount argument.'
+        }
+        $Mount = "type=bind,src=$Source,dst=$([string]$Volume.target),bind-recursive=disabled"
+        $ReadOnlyProperty = $Volume.PSObject.Properties['read_only']
+        if ($null -ne $ReadOnlyProperty -and [bool]$ReadOnlyProperty.Value) {
+            $Mount += ',readonly'
+        }
+        $DockerArguments.Add('--mount')
+        $DockerArguments.Add($Mount)
+    }
+    if ($EnableGpu) {
+        $Reservations = @($Service.deploy.resources.reservations.devices)
+        $DockerArguments.Add('--gpus')
+        $DockerArguments.Add('device=' + (@($Reservations[0].device_ids) -join ','))
+    }
+    $Entrypoint = @($Service.entrypoint)
+    $DockerArguments.Add('--entrypoint')
+    $DockerArguments.Add([string]$Entrypoint[0])
+    $DockerArguments.Add([string]$Service.image)
+    for ($Index = 1; $Index -lt $Entrypoint.Count; $Index += 1) {
+        $DockerArguments.Add([string]$Entrypoint[$Index])
+    }
+    foreach ($Argument in $Command) {
+        $DockerArguments.Add($Argument)
+    }
+
+    & docker @DockerArguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "Model Forge $ModeName failed with exit code $LASTEXITCODE."
     }
 }
 
@@ -1190,26 +1309,22 @@ try {
             $Volume.source = $BoundMountSources[[string]$Volume.target]
         }
     }
-    $ExecutionCompose = $ResolvedCompose | ConvertTo-Json -Depth 100 -Compress
-
+    $SelectedServiceName = $Mode.ToLowerInvariant()
+    if ($Mode -eq 'Validate') {
+        $SelectedServiceName = 'simulate'
+    }
+    $SelectedService = $ResolvedCompose.services.$SelectedServiceName
+    $SelectedCommand = @($SelectedService.command)
     switch ($Mode) {
         'Validate' {
-            $ExecutionCompose | & docker compose -f - run --rm simulate `
-                forge validate --plan /forge/plan.json
-        }
-        'Simulate' {
-            $ExecutionCompose | & docker compose -f - run --rm simulate
-        }
-        'Verify' {
-            $ExecutionCompose | & docker compose -f - run --rm verify
-        }
-        'Probe' {
-            $ExecutionCompose | & docker compose -f - --profile probe run --rm probe
+            $SelectedCommand = @('forge', 'validate', '--plan', '/forge/plan.json')
         }
     }
-    if ($LASTEXITCODE -ne 0) {
-        throw "Model Forge $Mode failed with exit code $LASTEXITCODE."
-    }
+    Invoke-ForgeDockerRun `
+        -Service $SelectedService `
+        -Command $SelectedCommand `
+        -ModeName $Mode `
+        -EnableGpu:($Mode -eq 'Probe')
 }
 finally {
     foreach ($Name in $EnvironmentNames) {
