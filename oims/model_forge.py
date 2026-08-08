@@ -25,6 +25,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path, PurePosixPath
@@ -39,6 +40,7 @@ MAX_PLAN_BYTES = 1024 * 1024
 MAX_RECORD_BYTES = 1024 * 1024
 MAX_TELEMETRY_BYTES = 16 * 1024 * 1024
 MAX_JSON_NESTING = 128
+HOST_MEMORY_DOMAIN_TOLERANCE_BYTES = 2 * 1024**3
 MAX_SIMULATION_STEPS = 4096
 MAX_FORGE_OUTPUT_BYTES = 64 * 1024 * 1024
 DEFAULT_FORGE_ARTIFACTS_DIR = ROOT / "artifacts" / "model-forge"
@@ -404,7 +406,23 @@ def _container_source_attestation_errors(environment: dict[str, Any]) -> tuple[s
         return ("Forge image source attestation is missing or malformed",)
     if attestation != (commit, tree):
         return ("Forge image source attestation does not match the declared commit and tree",)
+    if not _imported_source_is_isolated():
+        return ("Forge imported source is not isolated from runtime shadowing",)
     return ()
+
+
+def _imported_source_is_isolated() -> bool:
+    try:
+        source = Path(__file__).resolve(strict=True)
+        base_prefix = Path(sys.base_prefix).resolve(strict=True)
+    except (OSError, RuntimeError):
+        return False
+    workspace = Path("/workspace")
+    return (
+        sys.flags.isolated == 1
+        and base_prefix in source.parents
+        and workspace not in source.parents
+    )
 
 
 def forge_container_environment_errors(
@@ -1692,7 +1710,10 @@ def inspect_physical_preflight(
     if not _is_int(host_memory, minimum=1):
         errors.append("physical host memory is below the plan's host-memory ceiling")
     else:
-        if _is_int(declared_host_memory, minimum=1) and host_memory < declared_host_memory:
+        if (
+            _is_int(declared_host_memory, minimum=1)
+            and host_memory + HOST_MEMORY_DOMAIN_TOLERANCE_BYTES < declared_host_memory
+        ):
             errors.append("physical host memory is below the declared memory domain")
         if _is_int(host_limit, minimum=1) and host_memory < host_limit:
             errors.append("physical host memory is below the plan's host-memory ceiling")

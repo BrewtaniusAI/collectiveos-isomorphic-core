@@ -454,7 +454,7 @@ def test_probe_can_prove_a_locked_4090_sandbox_without_training() -> None:
         patch(
             "oims.model_forge._memory_info",
             return_value={
-                "MemTotal": 128 * 1024**3,
+                "MemTotal": 127 * 1024**3,
                 "MemAvailable": 121 * 1024**3,
                 "SwapTotal": 0,
                 "SwapFree": 0,
@@ -715,7 +715,7 @@ def test_direct_simulation_refuses_index_hidden_source_changes(tmp_path: Path) -
                 "swap_limit_bytes": 0,
                 "pids_limit": 512,
             },
-            129 * 1024**3,
+            131 * 1024**3,
             "physical host memory is below the declared memory domain",
         ),
     ],
@@ -1004,11 +1004,23 @@ def test_container_source_shortcut_requires_matching_image_attestation() -> None
         "OIMS_FORGE_SOURCE_COMMIT": "a" * 40,
         "OIMS_FORGE_SOURCE_TREE": "b" * 40,
     }
-    with patch(
-        "oims.model_forge._read_source_attestation",
-        return_value=("a" * 40, "b" * 40),
+    with (
+        patch(
+            "oims.model_forge._read_source_attestation",
+            return_value=("a" * 40, "b" * 40),
+        ),
+        patch("oims.model_forge._imported_source_is_isolated", return_value=True),
     ):
         assert forge_container_environment_errors(environment) == ()
+    with (
+        patch(
+            "oims.model_forge._read_source_attestation",
+            return_value=("a" * 40, "b" * 40),
+        ),
+        patch("oims.model_forge._imported_source_is_isolated", return_value=False),
+    ):
+        errors = forge_container_environment_errors(environment)
+    assert errors == ("Forge imported source is not isolated from runtime shadowing",)
     with patch(
         "oims.model_forge._read_source_attestation",
         return_value=("c" * 40, "d" * 40),
@@ -1050,6 +1062,10 @@ def test_oci_boundary_is_offline_unprivileged_and_non_training() -> None:
     assert "ARG FORGE_BASE_IMAGE\nFROM ${FORGE_BASE_IMAGE}" in containerfile
     assert "FROM python:" not in containerfile
     assert "source.attestation" in containerfile
+    assert "WORKDIR /workspace" not in containerfile
+    assert "rm -rf /opt/oims-forge-build" in containerfile
+    assert "WORKDIR /forge" in containerfile
+    assert 'ENTRYPOINT ["python", "-I", "-m", "oims"]' in containerfile
     launcher = (ROOT / "scripts" / "run_model_forge.ps1").read_text(encoding="utf-8")
     assert "status --porcelain=v1 --untracked-files=all" in launcher
     assert "ls-files -v" in launcher

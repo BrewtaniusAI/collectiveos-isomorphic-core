@@ -14,20 +14,23 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     OIMS_FORGE_SOURCE_COMMIT=${FORGE_SOURCE_COMMIT} \
     OIMS_FORGE_SOURCE_TREE=${FORGE_SOURCE_TREE}
 
-WORKDIR /workspace
+WORKDIR /opt/oims-forge-build
 COPY requirements/forge-runtime.lock /tmp/forge-runtime.lock
 RUN python -m pip install --no-cache-dir -r /tmp/forge-runtime.lock
-COPY . /workspace
-RUN test -f /workspace/.oims-forge-source.attestation \
+COPY . /opt/oims-forge-build
+RUN test -f /opt/oims-forge-build/.oims-forge-source.attestation \
     && mkdir -p /usr/local/share/oims-forge \
-    && mv /workspace/.oims-forge-source.attestation \
+    && mv /opt/oims-forge-build/.oims-forge-source.attestation \
         /usr/local/share/oims-forge/source.attestation \
     && chmod 0444 /usr/local/share/oims-forge/source.attestation
-RUN python -m pip install --no-cache-dir --no-deps .
+RUN python -m pip install --no-cache-dir --no-deps . \
+    && cd / \
+    && rm -rf /opt/oims-forge-build
 
 RUN mkdir -p /forge/output /forge/inputs/base /forge/inputs/dataset \
     && chown -R 65532:65532 /forge
 
+WORKDIR /forge
 USER 65532:65532
-ENTRYPOINT ["python", "-m", "oims"]
+ENTRYPOINT ["python", "-I", "-m", "oims"]
 CMD ["forge", "validate", "--plan", "/forge/plan.json"]

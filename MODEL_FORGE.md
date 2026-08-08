@@ -123,10 +123,12 @@ image and every downloaded training wheel before the `train` state can be introd
 The launcher requires Git, verifies that `-SourceCommit` (when supplied) equals `HEAD`, refuses any
 tracked or untracked working-tree change, rejects assume-unchanged/skip-worktree index flags, and
 uses `git archive` to construct a temporary Docker context from that exact commit. It records the
-exported commit and Git tree in an attestation that the image moves outside `/workspace`; the
-non-root runtime must match both values before using the container provenance shortcut. Compose
-refuses a working-tree context. This keeps the source recorded in Forge receipts bound to the exact
-source copied into the image.
+exported commit and Git tree in an attestation outside the installed package. The build installs
+that package into the interpreter prefix, removes its temporary source tree, and launches Python in
+isolated mode from `/forge`; the non-root runtime must match the attestation and prove that the
+imported module is isolated from `/workspace` before using the container provenance shortcut.
+Compose refuses a working-tree context. This keeps the source recorded in Forge receipts bound to
+the exact source copied into the image.
 
 Docker documents GPU reservations through `deploy.resources.reservations.devices`; the Forge
 sets `capabilities: [gpu]` and an explicit device ID. See
@@ -147,8 +149,10 @@ sets `capabilities: [gpu]` and an explicit device ID. See
 7. No default route, no interface other than loopback, and no swap use.
 8. Current cgroup usage subtracted from the cgroup RAM limit must leave the full plan ceiling;
    cgroup swap is zero and the PID limit is no greater than 512.
-9. A parseable RTX 4090 `nvidia-smi` record with enough currently available VRAM, currently
-   available host RAM, and temperature headroom for the plan ceilings.
+9. Observed host `MemTotal` within a bounded 2 GiB reserved-memory tolerance of the declared
+   physical host domain, plus enough currently available host RAM for the peak ceiling.
+10. A parseable RTX 4090 `nvidia-smi` record with matching VRAM capacity, enough currently
+    available VRAM, and temperature headroom for the plan ceilings.
 
 The checked-in probe plan hash is
 `sha256:a7d8598120a94de263af8f3d2de54e5be0da4142c10c8aeef4d1467e8266f4b6`. Run it
