@@ -386,6 +386,40 @@ def _forge_source_commit(environment: dict[str, str] | None = None) -> str | Non
     return injected if _is_revision(injected) else current_git_commit(ROOT)
 
 
+def _verified_execution_source_commit(
+    environment: dict[str, str] | None = None,
+) -> str | None:
+    env = environment if environment is not None else dict(os.environ)
+    injected = env.get("OIMS_FORGE_SOURCE_COMMIT")
+    if (
+        _is_revision(injected)
+        and env.get("OIMS_FORGE_CONTAINER") == "1"
+        and not forge_container_environment_errors(env)
+    ):
+        return injected
+    try:
+        completed = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(ROOT),
+                "status",
+                "--porcelain=v1",
+                "--untracked-files=all",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.stdout.strip():
+        return None
+    commit = current_git_commit(ROOT)
+    return commit if _is_revision(commit) else None
+
+
 def _strict_json_loads(text: str) -> object:
     def pairs_hook(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
         result: dict[str, Any] = {}
@@ -798,6 +832,11 @@ def simulate_forge_run(
         raise ForgePlanError("; ".join(errors))
     if plan["mode"] != "simulate":
         raise ForgePlanError("only a simulate plan can enter the simulation lane")
+    source_commit = _verified_execution_source_commit()
+    if source_commit is None:
+        raise ForgePlanError(
+            "Forge simulation requires an injected source commit or a clean Git working tree"
+        )
 
     plan_hash = plan["plan_hash"]
     run_id = f"sim-{plan_hash.removeprefix('sha256:')[:16]}"
@@ -912,7 +951,7 @@ def simulate_forge_run(
         "rollback_artifact_hash": plan["qmf_contract"]["rollback_artifact_hash"],
         "governance_route": GOVERNANCE_ROUTE,
         "limitations": SIMULATION_LIMITATIONS,
-        "source_commit": _forge_source_commit(),
+        "source_commit": source_commit,
     }
     sealed = seal_record(receipt)
     atomic_write_json(run_dir / "receipt.json", sealed)
@@ -1234,6 +1273,38 @@ def _network_interfaces() -> set[str]:
         return set()
 
 
+def _output_path_process_writable(path: Path = Path("/forge/output")) -> bool:
+    descriptor: int | None = None
+    temporary: Path | None = None
+    try:
+        descriptor, temporary_name = tempfile.mkstemp(
+            dir=path,
+            prefix=".oims-forge-write-probe-",
+            suffix=".tmp",
+        )
+        temporary = Path(temporary_name)
+        handle = os.fdopen(descriptor, "wb")
+        descriptor = None
+        with handle:
+            handle.write(b"oims-model-forge-write-probe\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.unlink()
+        return True
+    except OSError:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
+        return False
+
+
 def _forge_mount_policy() -> dict[str, bool]:
     targets = {
         "/forge/plan.json": "plan_read_only",
@@ -1243,6 +1314,7 @@ def _forge_mount_policy() -> dict[str, bool]:
         "/tmp": "tmpfs_active",
     }
     result = {name: False for name in targets.values()}
+    result["output_process_writable"] = False
     try:
         lines = Path("/proc/self/mountinfo").read_text(encoding="utf-8").splitlines()
     except OSError:
@@ -1266,6 +1338,7 @@ def _forge_mount_policy() -> dict[str, bool]:
             result[observation] = filesystem_fields[0] == "tmpfs"
         else:
             result[observation] = "ro" in options and "rw" not in options
+    result["output_process_writable"] = _output_path_process_writable()
     return result
 
 

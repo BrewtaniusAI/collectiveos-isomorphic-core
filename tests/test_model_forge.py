@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 import yaml
 
+from oims.cli import main as cli_main
 from oims.manifest import ROOT
 from oims.model_forge import (
     EXPECTED_TARGET_PARAMETERS,
@@ -270,6 +271,7 @@ def test_probe_can_prove_a_locked_4090_sandbox_without_training() -> None:
                 "base_model_read_only": True,
                 "dataset_read_only": True,
                 "output_writable": True,
+                "output_process_writable": True,
                 "tmpfs_active": True,
             },
         ),
@@ -396,6 +398,26 @@ def test_simulation_refuses_unreplayable_timestamps_before_writing(tmp_path: Pat
     assert not list(tmp_path.iterdir())
 
 
+def test_direct_simulation_refuses_dirty_source_before_writing(tmp_path: Path) -> None:
+    dirty = subprocess.CompletedProcess(
+        args=["git", "status"],
+        returncode=0,
+        stdout=" M oims/model_forge.py\n",
+        stderr="",
+    )
+    with (
+        patch.dict(
+            "oims.model_forge.os.environ",
+            {"OIMS_FORGE_SOURCE_COMMIT": "a" * 40},
+            clear=True,
+        ),
+        patch("oims.model_forge.subprocess.run", return_value=dirty),
+        pytest.raises(ForgePlanError, match="clean Git working tree"),
+    ):
+        simulate_forge_run(load_example(), artifacts_dir=tmp_path)
+    assert not list(tmp_path.iterdir())
+
+
 def test_probe_requires_current_host_memory_headroom() -> None:
     plan = probe_plan()
     environment = {
@@ -431,6 +453,7 @@ def test_probe_requires_current_host_memory_headroom() -> None:
                 "base_model_read_only": True,
                 "dataset_read_only": True,
                 "output_writable": True,
+                "output_process_writable": True,
                 "tmpfs_active": True,
             },
         ),
@@ -454,6 +477,94 @@ def test_probe_requires_current_host_memory_headroom() -> None:
     assert result["lawful"] is False
     assert "available host memory is below the plan's host-memory ceiling" in result["errors"]
     run.assert_not_called()
+
+
+def test_probe_requires_process_level_output_write() -> None:
+    plan = probe_plan()
+    environment = {
+        "OIMS_FORGE_ENABLE_PROBE": "1",
+        "OIMS_FORGE_CONTAINER": "1",
+        "HF_HUB_OFFLINE": "1",
+        "TRANSFORMERS_OFFLINE": "1",
+        "HF_DATASETS_OFFLINE": "1",
+        "OIMS_FORGE_BASE_IMAGE": "python:3.12-slim@sha256:" + "a" * 64,
+        "OIMS_FORGE_SOURCE_COMMIT": "a" * 40,
+    }
+    with (
+        patch(
+            "oims.model_forge._proc_status",
+            return_value={"CapEff": "0000000000000000", "NoNewPrivs": "1", "Seccomp": "2"},
+        ),
+        patch(
+            "oims.model_forge._memory_info",
+            return_value={
+                "MemTotal": 128 * 1024**3,
+                "MemAvailable": 121 * 1024**3,
+                "SwapTotal": 0,
+                "SwapFree": 0,
+            },
+        ),
+        patch("oims.model_forge._root_is_read_only", return_value=True),
+        patch("oims.model_forge._default_route_present", return_value=False),
+        patch("oims.model_forge._network_interfaces", return_value={"lo"}),
+        patch(
+            "oims.model_forge._forge_mount_policy",
+            return_value={
+                "plan_read_only": True,
+                "base_model_read_only": True,
+                "dataset_read_only": True,
+                "output_writable": True,
+                "output_process_writable": False,
+                "tmpfs_active": True,
+            },
+        ),
+        patch(
+            "oims.model_forge._cgroup_limits",
+            return_value={
+                "memory_limit_bytes": 120 * 1024**3,
+                "swap_limit_bytes": 0,
+                "pids_limit": 512,
+            },
+        ),
+        patch("oims.model_forge.os.geteuid", return_value=65532),
+        patch("oims.model_forge.current_git_commit", return_value="a" * 40),
+        patch("oims.model_forge.subprocess.run") as run,
+    ):
+        result = inspect_physical_preflight(
+            plan,
+            accepted_plan_hash=plan["plan_hash"],
+            environment=environment,
+        )
+    assert result["lawful"] is False
+    assert result["sandbox_observation"]["output_process_writable"] is False
+    run.assert_not_called()
+
+
+def test_probe_cli_turns_receipt_write_failure_into_a_refusal(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    result = {"lawful": False, "status": "REFUSED", "qmf_admissible": False, "errors": []}
+    with (
+        patch("oims.cli.inspect_physical_preflight", return_value=result),
+        patch("oims.cli.atomic_write_json", side_effect=PermissionError("denied")),
+    ):
+        exit_code = cli_main(
+            [
+                "forge",
+                "probe",
+                "--plan",
+                str(PROBE_EXAMPLE),
+                "--accept-plan-hash",
+                probe_plan()["plan_hash"],
+                "--output",
+                str(tmp_path),
+            ]
+        )
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 2
+    assert payload["qmf_admissible"] is False
+    assert "cannot persist Forge preflight receipt" in payload["errors"][0]
 
 
 def test_recipe_preserves_reviewed_gpt_oss_moe_targets() -> None:

@@ -65,6 +65,10 @@ python -m oims forge simulate `
   --output artifacts/model-forge
 ```
 
+The direct simulation path also requires either the launcher-injected source commit or a clean Git
+working tree. It refuses before creating the run directory when executed from dirty or unprovable
+source, preventing receipts from attributing modified code to a clean `HEAD`.
+
 Verify the returned receipt and every linked telemetry/checkpoint/candidate artifact:
 
 ```powershell
@@ -128,8 +132,8 @@ sets `capabilities: [gpu]` and an explicit device ID. See
 4. An immutable base-image digest plus offline Hugging Face environment flags.
 5. Non-root execution, empty Linux capabilities, no-new-privileges, and an active default seccomp
    filter.
-6. A read-only root, read-only plan/base/dataset mounts, a writable evidence mount, and tmpfs at
-   `/tmp`.
+6. A read-only root, read-only plan/base/dataset mounts, a writable evidence mount, a successful
+   process-level create/write/fsync/delete probe as UID 65532, and tmpfs at `/tmp`.
 7. No default route, no interface other than loopback, and no swap use.
 8. Cgroup RAM at or above the plan ceiling, zero cgroup swap, and a PID limit no greater than 512.
 9. A parseable RTX 4090 `nvidia-smi` record with enough currently available VRAM, currently

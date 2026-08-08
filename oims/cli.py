@@ -203,7 +203,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                 }
             )
             return 2
-        atomic_write_json(receipt_path, result)
+        try:
+            atomic_write_json(receipt_path, result)
+        except OSError as exc:
+            print_json(
+                {
+                    "status": "REFUSED",
+                    "qmf_admissible": False,
+                    "errors": [f"cannot persist Forge preflight receipt: {exc}"],
+                }
+            )
+            return 2
         print_json(result)
         return 0 if result["lawful"] else 2
 
