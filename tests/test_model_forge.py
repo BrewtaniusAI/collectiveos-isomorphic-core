@@ -1503,14 +1503,15 @@ def test_preimport_entrypoint_allows_attested_nvidia_runtime_mounts(tmp_path: Pa
 @pytest.mark.parametrize("target", forge_entrypoint.PROBE_OBSERVATION_PATHS)
 def test_preimport_probe_rejects_mounts_over_observation_sources(target: Path) -> None:
     baseline = (
-        forge_entrypoint.MountRecord(Path("/"), frozenset({"rw"}), "overlay", "overlay"),
-        forge_entrypoint.MountRecord(Path("/proc"), frozenset({"rw"}), "proc", "proc"),
-        forge_entrypoint.MountRecord(Path("/sys"), frozenset({"ro"}), "sysfs", "sysfs"),
+        forge_entrypoint.MountRecord(Path("/"), frozenset({"rw"}), "overlay", "overlay", Path("/")),
+        forge_entrypoint.MountRecord(Path("/proc"), frozenset({"rw"}), "proc", "proc", Path("/")),
+        forge_entrypoint.MountRecord(Path("/sys"), frozenset({"ro"}), "sysfs", "sysfs", Path("/")),
         forge_entrypoint.MountRecord(
             Path("/sys/fs/cgroup"),
             frozenset({"ro"}),
             "cgroup2",
             "cgroup",
+            Path("/"),
         ),
     )
     injected = forge_entrypoint.MountRecord(
@@ -1518,12 +1519,53 @@ def test_preimport_probe_rejects_mounts_over_observation_sources(target: Path) -
         frozenset({"ro"}),
         "ext4",
         "/attacker/forged-observation",
+        Path("/attacker/forged-observation"),
     )
 
-    errors = forge_entrypoint.probe_observation_mount_errors((*baseline, injected))
+    errors = forge_entrypoint.probe_observation_mount_errors((*baseline, injected), "/")
 
     assert errors
     assert errors[0].startswith("Forge physical-preflight observation")
+
+
+def test_preimport_mountinfo_parser_preserves_cgroup_root() -> None:
+    mountinfo = b"117 116 0:24 /attacker\\040subgroup /sys/fs/cgroup ro - cgroup2 cgroup rw\n"
+
+    with patch.object(forge_entrypoint, "_read_proc_metadata", return_value=mountinfo):
+        records = forge_entrypoint._mount_records()
+
+    assert records is not None
+    assert records[0].root == Path("/attacker subgroup")
+
+
+@pytest.mark.parametrize(
+    ("mount_root", "membership"),
+    [
+        (Path("/attacker/subgroup"), "/"),
+        (Path("/"), "/attacker/subgroup"),
+    ],
+)
+def test_preimport_probe_rejects_cgroup_subgroup_substitution(
+    mount_root: Path,
+    membership: str,
+) -> None:
+    records = (
+        forge_entrypoint.MountRecord(Path("/"), frozenset({"rw"}), "overlay", "overlay", Path("/")),
+        forge_entrypoint.MountRecord(Path("/proc"), frozenset({"rw"}), "proc", "proc", Path("/")),
+        forge_entrypoint.MountRecord(Path("/sys"), frozenset({"ro"}), "sysfs", "sysfs", Path("/")),
+        forge_entrypoint.MountRecord(
+            Path("/sys/fs/cgroup"),
+            frozenset({"ro"}),
+            "cgroup2",
+            "cgroup",
+            mount_root,
+        ),
+    )
+
+    errors = forge_entrypoint.probe_observation_mount_errors(records, membership)
+
+    assert errors
+    assert errors[0].startswith("Forge physical-preflight")
 
 
 def test_nvidia_runtime_mount_attestation_hashes_read_only_regular_files(

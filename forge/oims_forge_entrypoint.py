@@ -18,6 +18,7 @@ PROBE_OBSERVATION_PATHS = (
     Path("/proc/self/mountinfo"),
     Path("/proc/self/maps"),
     Path("/proc/self/status"),
+    Path("/proc/self/cgroup"),
     Path("/proc/meminfo"),
     Path("/proc/mounts"),
     Path("/proc/net/route"),
@@ -27,7 +28,7 @@ PROBE_OBSERVATION_PATHS = (
 OBSERVATION_ROOT_FILESYSTEMS = {
     Path("/proc"): frozenset({"proc"}),
     Path("/sys"): frozenset({"sysfs"}),
-    Path("/sys/fs/cgroup"): frozenset({"cgroup", "cgroup2"}),
+    Path("/sys/fs/cgroup"): frozenset({"cgroup2"}),
 }
 NATIVE_RUNTIME_ROOTS = (
     Path("/bin"),
@@ -68,6 +69,7 @@ class MountRecord(NamedTuple):
     options: frozenset[str]
     filesystem_type: str
     source: str
+    root: Path
 
 
 def _is_revision(value: object) -> bool:
@@ -230,12 +232,20 @@ def _mount_records(
             .replace("\\012", "\n")
             .replace("\\134", "\\")
         )
+        root = (
+            fields[3]
+            .replace("\\040", " ")
+            .replace("\\011", "\t")
+            .replace("\\012", "\n")
+            .replace("\\134", "\\")
+        )
         records.append(
             MountRecord(
                 Path(value),
                 frozenset(fields[5].split(",")),
                 filesystem_fields[0],
                 filesystem_fields[1],
+                Path(root),
             )
         )
     return tuple(records)
@@ -413,11 +423,31 @@ def attested_nvidia_smi_path(paths: tuple[Path, ...]) -> Path | None:
     return candidates[0] if len(candidates) == 1 else None
 
 
-def probe_observation_mount_errors(records: tuple[MountRecord, ...]) -> tuple[str, ...]:
+def _cgroup_membership(path: Path = Path("/proc/self/cgroup")) -> str | None:
+    payload = _read_proc_metadata(path)
+    if payload is None:
+        return None
+    try:
+        lines = payload.decode("ascii").splitlines()
+    except UnicodeDecodeError:
+        return None
+    return "/" if lines == ["0::/"] else None
+
+
+def probe_observation_mount_errors(
+    records: tuple[MountRecord, ...],
+    cgroup_membership: str | None,
+) -> tuple[str, ...]:
     for root, expected_filesystems in OBSERVATION_ROOT_FILESYSTEMS.items():
         root_records = tuple(record for record in records if record.path == root)
-        if len(root_records) != 1 or root_records[0].filesystem_type not in expected_filesystems:
+        if (
+            len(root_records) != 1
+            or root_records[0].filesystem_type not in expected_filesystems
+            or root_records[0].root != Path("/")
+        ):
             return ("Forge physical-preflight observation filesystems cannot be verified",)
+    if cgroup_membership != "/":
+        return ("Forge physical-preflight cgroup membership cannot be verified",)
     allowed_roots = set(OBSERVATION_ROOT_FILESYSTEMS)
     for record in records:
         mount = record.path
@@ -443,11 +473,15 @@ def protected_mount_errors(
     nvidia_approvals_path: Path = NVIDIA_RUNTIME_APPROVALS_PATH,
     observed_mount_records: tuple[MountRecord, ...] | None = None,
     protect_probe_observations: bool = False,
+    cgroup_membership: str | None = None,
 ) -> tuple[str, ...]:
     if protect_probe_observations:
         if observed_mount_records is None:
             return ("Forge physical-preflight observation filesystems cannot be verified",)
-        observation_errors = probe_observation_mount_errors(observed_mount_records)
+        observation_errors = probe_observation_mount_errors(
+            observed_mount_records,
+            cgroup_membership,
+        )
         if observation_errors:
             return observation_errors
     runtime_paths = (
@@ -503,6 +537,7 @@ def verify_installed_package(
     allowed_native_mounts: tuple[Path, ...] = (),
     observed_mount_records: tuple[MountRecord, ...] | None = None,
     protect_probe_observations: bool = False,
+    cgroup_membership: str | None = None,
 ) -> tuple[str, ...]:
     values = _read_values(attestation_path)
     if values is None or set(values) != {"commit", "tree", "package_sha256"}:
@@ -521,6 +556,7 @@ def verify_installed_package(
         allowed_native_mounts=allowed_native_mounts,
         observed_mount_records=observed_mount_records,
         protect_probe_observations=protect_probe_observations,
+        cgroup_membership=cgroup_membership,
     )
     if mount_errors:
         return mount_errors
@@ -575,6 +611,7 @@ def main(arguments: list[str] | None = None) -> int:
         nvidia_smi_path = None
     elif argv[:2] == ["forge", "probe"]:
         nvidia_attestation = nvidia_runtime_mount_attestation(records)
+        cgroup_membership = _cgroup_membership()
         nvidia_smi_path = (
             attested_nvidia_smi_path(nvidia_attestation[0])
             if nvidia_attestation is not None
@@ -588,6 +625,7 @@ def main(arguments: list[str] | None = None) -> int:
                 allowed_native_mounts=nvidia_attestation[0],
                 observed_mount_records=records,
                 protect_probe_observations=True,
+                cgroup_membership=cgroup_membership,
             )
         )
     else:
