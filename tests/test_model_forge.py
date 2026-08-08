@@ -1397,6 +1397,15 @@ def test_preimport_entrypoint_rejects_installed_package_tampering(tmp_path: Path
     )
 
 
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFO inputs require POSIX")
+def test_preimport_attestation_reader_rejects_fifo_without_blocking(tmp_path: Path) -> None:
+    attestation = tmp_path / "source.attestation"
+    os.mkfifo(attestation)
+
+    assert forge_entrypoint._read_values(attestation) is None
+    assert model_forge_module._read_source_attestation(attestation) is None
+
+
 def test_preimport_entrypoint_rejects_matching_replacement_mounts(tmp_path: Path) -> None:
     package_root = tmp_path / "oims"
     package_root.mkdir()

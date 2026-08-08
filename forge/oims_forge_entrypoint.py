@@ -41,6 +41,7 @@ NVIDIA_RUNTIME_EXECUTABLES = frozenset(
 )
 MAX_NVIDIA_RUNTIME_MOUNTS = 256
 MAX_NVIDIA_RUNTIME_BYTES = 2 * 1024**3
+MAX_ATTESTATION_BYTES = 256
 
 
 def _is_revision(value: object) -> bool:
@@ -104,12 +105,33 @@ def installed_package_root() -> Path | None:
 
 
 def _read_values(path: Path) -> dict[str, str] | None:
+    descriptor: int | None = None
     try:
-        if path.stat().st_size > 256:
+        flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > MAX_ATTESTATION_BYTES:
             return None
-        lines = path.read_text(encoding="ascii").splitlines()
+        payload = bytearray()
+        while chunk := os.read(descriptor, MAX_ATTESTATION_BYTES + 1 - len(payload)):
+            payload.extend(chunk)
+            if len(payload) > MAX_ATTESTATION_BYTES:
+                return None
+        final_metadata = os.fstat(descriptor)
+        if (
+            len(payload) != metadata.st_size
+            or final_metadata.st_dev != metadata.st_dev
+            or final_metadata.st_ino != metadata.st_ino
+            or final_metadata.st_size != metadata.st_size
+            or final_metadata.st_mtime_ns != metadata.st_mtime_ns
+        ):
+            return None
+        lines = payload.decode("ascii").splitlines()
     except (OSError, UnicodeDecodeError):
         return None
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
     values: dict[str, str] = {}
     for line in lines:
         key, separator, value = line.partition("=")

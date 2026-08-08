@@ -125,7 +125,8 @@ isolated mode from `/forge`; the non-root runtime must match the attestation and
 imported module is isolated from `/workspace` before using the container provenance shortcut.
 Before importing any project code, an external isolated entrypoint hashes every installed `oims`
 package byte and compares it with a digest sealed into the build attestation; the in-package check
-repeats that comparison as defense in depth. The entrypoint also reads `/proc/self/mountinfo` and
+repeats that comparison as defense in depth. Both attestation readers use a nonblocking, bounded
+regular-file descriptor rather than a path-based metadata/read sequence. The entrypoint also reads `/proc/self/mountinfo` and
 `/proc/self/maps`. It refuses any mount covering or nested beneath the interpreter prefix,
 installed package, attestation, verifier, standard executable/library roots, dynamic-loader
 configuration, the Python executable, or any file-backed process mapping. This protects Python

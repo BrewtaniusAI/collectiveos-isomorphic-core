@@ -389,10 +389,9 @@ def _read_source_attestation(
     path: Path = SOURCE_ATTESTATION_PATH,
 ) -> tuple[str, str, str] | None:
     try:
-        if path.stat().st_size > 256:
-            return None
-        lines = path.read_text(encoding="ascii").splitlines()
-    except (OSError, UnicodeDecodeError):
+        payload = _read_bounded_bytes(path, "Forge source attestation", max_bytes=256)
+        lines = payload.decode("ascii").splitlines()
+    except (ForgePlanError, UnicodeDecodeError):
         return None
     values: dict[str, str] = {}
     for line in lines:
