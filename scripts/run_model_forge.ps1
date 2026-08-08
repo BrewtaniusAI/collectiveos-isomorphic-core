@@ -57,6 +57,150 @@ function Test-PathsOverlap {
     )
 }
 
+function Get-ForgePathIdentity {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    if (-not ('OimsForgePathIdentity' -as [type])) {
+        Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+
+public static class OimsForgePathIdentity
+{
+    private const uint FileShareRead = 0x00000001;
+    private const uint FileShareWrite = 0x00000002;
+    private const uint FileShareDelete = 0x00000004;
+    private const uint OpenExisting = 3;
+    private const uint FileFlagBackupSemantics = 0x02000000;
+    private const int AtFdcwd = -100;
+    private const uint StatxIno = 0x00000100;
+    private const uint StatxMountId = 0x00001000;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ByHandleFileInformation
+    {
+        public uint FileAttributes;
+        public System.Runtime.InteropServices.ComTypes.FILETIME CreationTime;
+        public System.Runtime.InteropServices.ComTypes.FILETIME LastAccessTime;
+        public System.Runtime.InteropServices.ComTypes.FILETIME LastWriteTime;
+        public uint VolumeSerialNumber;
+        public uint FileSizeHigh;
+        public uint FileSizeLow;
+        public uint NumberOfLinks;
+        public uint FileIndexHigh;
+        public uint FileIndexLow;
+    }
+
+    [StructLayout(LayoutKind.Explicit, Size = 256)]
+    private struct StatxBuffer
+    {
+        [FieldOffset(0)] public uint Mask;
+        [FieldOffset(28)] public ushort Mode;
+        [FieldOffset(32)] public ulong Inode;
+        [FieldOffset(136)] public uint DeviceMajor;
+        [FieldOffset(140)] public uint DeviceMinor;
+        [FieldOffset(144)] public ulong MountId;
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle CreateFile(
+        string fileName,
+        uint desiredAccess,
+        uint shareMode,
+        IntPtr securityAttributes,
+        uint creationDisposition,
+        uint flagsAndAttributes,
+        IntPtr templateFile
+    );
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetFileInformationByHandle(
+        SafeFileHandle handle,
+        out ByHandleFileInformation information
+    );
+
+    [DllImport("libc", EntryPoint = "statx", SetLastError = true)]
+    private static extern int Statx(
+        int directoryFileDescriptor,
+        string path,
+        int flags,
+        uint mask,
+        out StatxBuffer buffer
+    );
+
+    public static string Get(string path)
+    {
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            using (SafeFileHandle handle = CreateFile(
+                path,
+                0,
+                FileShareRead | FileShareWrite | FileShareDelete,
+                IntPtr.Zero,
+                OpenExisting,
+                FileFlagBackupSemantics,
+                IntPtr.Zero))
+            {
+                if (handle.IsInvalid)
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                ByHandleFileInformation information;
+                if (!GetFileInformationByHandle(handle, out information))
+                    throw new Win32Exception(Marshal.GetLastWin32Error());
+                ulong index = ((ulong)information.FileIndexHigh << 32) | information.FileIndexLow;
+                return String.Format("windows:{0:x8}:{1:x16}", information.VolumeSerialNumber, index);
+            }
+        }
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        {
+            StatxBuffer buffer;
+            int result = Statx(AtFdcwd, path, 0, StatxIno | StatxMountId, out buffer);
+            if (result != 0)
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            if ((buffer.Mask & StatxIno) == 0 || (buffer.Mask & StatxMountId) == 0)
+                throw new InvalidOperationException("statx did not return inode and mount identities.");
+            return String.Format(
+                "linux:{0:x4}:{1:x8}:{2:x8}:{3:x16}:{4:x16}",
+                buffer.Mode,
+                buffer.DeviceMajor,
+                buffer.DeviceMinor,
+                buffer.Inode,
+                buffer.MountId
+            );
+        }
+        throw new PlatformNotSupportedException("Model Forge host identity requires Windows or Linux.");
+    }
+}
+'@ | Out-Null
+    }
+    return [OimsForgePathIdentity]::Get($Path)
+}
+
+function Assert-ForgeHostMountIdentity {
+    param(
+        [Parameter(Mandatory = $true)][hashtable]$ExpectedPaths,
+        [Parameter(Mandatory = $true)][hashtable]$ExpectedIdentities
+    )
+
+    foreach ($Name in $ExpectedPaths.Keys) {
+        $ExpectedPath = [string]$ExpectedPaths[$Name]
+        $CurrentPath = (Resolve-Path -LiteralPath $ExpectedPath).Path
+        if (
+            $CurrentPath -cne $ExpectedPath -or
+            (Get-ForgePathIdentity $CurrentPath) -cne [string]$ExpectedIdentities[$Name]
+        ) {
+            throw "Model Forge host mount identity changed before container launch: $Name"
+        }
+    }
+    foreach ($ProtectedName in @('Plan', 'BaseModel', 'Dataset')) {
+        if (Test-PathsOverlap -Left $ExpectedPaths['Output'] -Right $ExpectedPaths[$ProtectedName]) {
+            throw 'OutputDir must remain disjoint from Plan, BaseModelDir, and DatasetDir.'
+        }
+    }
+}
+
 function ConvertTo-ForgeByteCount {
     param([AllowNull()][object]$Value)
 
@@ -101,7 +245,7 @@ function Test-ForgeTmpfsPolicy {
         return $false
     }
     $Parts = ([string]$Entries[0]).Split(':', 2)
-    if ($Parts.Count -ne 2 -or $Parts[0] -ne '/tmp') {
+    if ($Parts.Count -ne 2 -or $Parts[0] -cne '/tmp') {
         return $false
     }
     $Options = @{}
@@ -117,8 +261,9 @@ function Test-ForgeTmpfsPolicy {
     }
     return (
         $Options.Count -eq 2 -and
+        (@(Compare-Object @('mode', 'size') @($Options.Keys) -CaseSensitive)).Count -eq 0 -and
         (ConvertTo-ForgeByteCount $Options['size']) -eq '1073741824' -and
-        [string]$Options['mode'] -eq '1777'
+        [string]$Options['mode'] -ceq '1777'
     )
 }
 
@@ -276,7 +421,7 @@ if ($LASTEXITCODE -ne 0 -or -not $ResolvedWorkTree) {
     throw 'Could not resolve the Model Forge Git worktree.'
 }
 $ResolvedWorkTree = (Resolve-Path -LiteralPath $ResolvedWorkTree).Path
-if ($ResolvedWorkTree -ne $RepositoryRoot) {
+if ($ResolvedWorkTree -cne $RepositoryRoot) {
     throw 'Git did not resolve the expected Model Forge worktree.'
 }
 $HeadCommit = (& git -C $RepositoryRoot rev-parse HEAD).Trim()
@@ -327,6 +472,16 @@ foreach ($ProtectedSource in @($PlanPath, $BaseModelPath, $DatasetPath)) {
     if (Test-PathsOverlap -Left $OutputPath -Right $ProtectedSource) {
         throw 'OutputDir must not equal, contain, or be contained by Plan, BaseModelDir, or DatasetDir.'
     }
+}
+$ExpectedHostPaths = @{
+    'Plan' = $PlanPath
+    'BaseModel' = $BaseModelPath
+    'Dataset' = $DatasetPath
+    'Output' = $OutputPath
+}
+$ExpectedHostIdentities = @{}
+foreach ($Name in $ExpectedHostPaths.Keys) {
+    $ExpectedHostIdentities[$Name] = Get-ForgePathIdentity $ExpectedHostPaths[$Name]
 }
 
 $ContainerReceipt = $null
@@ -415,7 +570,7 @@ try {
     $ResolvedCompose = ($ComposeOutput -join [Environment]::NewLine) | ConvertFrom-Json
     $ExpectedServices = @('simulate', 'verify', 'probe')
     $ObservedServices = @($ResolvedCompose.services.PSObject.Properties.Name)
-    if (@(Compare-Object $ExpectedServices $ObservedServices).Count -ne 0) {
+    if (@(Compare-Object $ExpectedServices $ObservedServices -CaseSensitive).Count -ne 0) {
         throw 'Model Forge Compose policy contains an unexpected service.'
     }
     $ExpectedEntrypoint = @(
@@ -464,6 +619,7 @@ try {
             ReadOnly = $true
         }
     }
+    $ExpectedMountTargets = @($ExpectedMounts.Keys)
     foreach ($ServiceName in $ExpectedServices) {
         $Service = $ResolvedCompose.services.$ServiceName
         $ExpectedServiceProperties = @(
@@ -488,19 +644,19 @@ try {
             $ExpectedServiceProperties += @('deploy', 'profiles')
         }
         $ObservedServiceProperties = @($Service.PSObject.Properties.Name)
-        if (@(Compare-Object $ExpectedServiceProperties $ObservedServiceProperties).Count -ne 0) {
+        if (@(Compare-Object $ExpectedServiceProperties $ObservedServiceProperties -CaseSensitive).Count -ne 0) {
             throw "Model Forge Compose service $ServiceName has an unexpected policy field."
         }
         $BuildProperty = $Service.PSObject.Properties['build']
         if (
             $null -ne $BuildProperty -or
-            [string]$Service.image -ne $ForgeImage -or
-            [string]$Service.pull_policy -ne 'never' -or
-            [string]$Service.user -ne '65532:65532' -or
-            [string]$Service.network_mode -ne 'none' -or
+            [string]$Service.image -cne $ForgeImage -or
+            [string]$Service.pull_policy -cne 'never' -or
+            [string]$Service.user -cne '65532:65532' -or
+            [string]$Service.network_mode -cne 'none' -or
             -not [bool]$Service.read_only -or
-            (@($Service.cap_drop) -join ',') -ne 'ALL' -or
-            (@($Service.security_opt) -join ',') -ne 'no-new-privileges:true' -or
+            (@($Service.cap_drop) -join ',') -cne 'ALL' -or
+            (@($Service.security_opt) -join ',') -cne 'no-new-privileges:true' -or
             [int64]$Service.pids_limit -ne 512 -or
             (ConvertTo-ForgeByteCount $Service.mem_limit) -ne $ExpectedMemoryBytes -or
             (ConvertTo-ForgeByteCount $Service.memswap_limit) -ne $ExpectedMemoryBytes -or
@@ -510,13 +666,13 @@ try {
             throw "Model Forge Compose service $ServiceName violates the pre-start sandbox policy."
         }
         if ($ServiceName -eq 'probe') {
-            if ((@($Service.profiles) -join ',') -ne 'probe') {
+            if ((@($Service.profiles) -join ',') -cne 'probe') {
                 throw 'Model Forge Compose probe has an unexpected profile.'
             }
             if (
-                (@(Compare-Object @('resources') @($Service.deploy.PSObject.Properties.Name))).Count -ne 0 -or
-                (@(Compare-Object @('reservations') @($Service.deploy.resources.PSObject.Properties.Name))).Count -ne 0 -or
-                (@(Compare-Object @('devices') @($Service.deploy.resources.reservations.PSObject.Properties.Name))).Count -ne 0
+                (@(Compare-Object @('resources') @($Service.deploy.PSObject.Properties.Name) -CaseSensitive)).Count -ne 0 -or
+                (@(Compare-Object @('reservations') @($Service.deploy.resources.PSObject.Properties.Name) -CaseSensitive)).Count -ne 0 -or
+                (@(Compare-Object @('devices') @($Service.deploy.resources.reservations.PSObject.Properties.Name) -CaseSensitive)).Count -ne 0
             ) {
                 throw 'Model Forge Compose probe has an unexpected resource reservation.'
             }
@@ -526,18 +682,18 @@ try {
             }
             $Device = $DeviceReservations[0]
             if (
-                (@(Compare-Object @('capabilities', 'device_ids', 'driver') @($Device.PSObject.Properties.Name))).Count -ne 0 -or
-                [string]$Device.driver -ne 'nvidia' -or
-                (@($Device.device_ids) -join ',') -ne [string]$GpuDeviceId -or
-                (@($Device.capabilities) -join ',') -ne 'gpu'
+                (@(Compare-Object @('capabilities', 'device_ids', 'driver') @($Device.PSObject.Properties.Name) -CaseSensitive)).Count -ne 0 -or
+                [string]$Device.driver -cne 'nvidia' -or
+                (@($Device.device_ids) -join ',') -cne [string]$GpuDeviceId -or
+                (@($Device.capabilities) -join ',') -cne 'gpu'
             ) {
                 throw 'Model Forge Compose probe has an unexpected GPU reservation.'
             }
         }
-        if ((@($Service.entrypoint) -join "`0") -ne ($ExpectedEntrypoint -join "`0")) {
+        if ((@($Service.entrypoint) -join "`0") -cne ($ExpectedEntrypoint -join "`0")) {
             throw "Model Forge Compose service $ServiceName has an unexpected entrypoint."
         }
-        if ((@($Service.command) -join "`0") -ne (@($ExpectedCommands[$ServiceName]) -join "`0")) {
+        if ((@($Service.command) -join "`0") -cne (@($ExpectedCommands[$ServiceName]) -join "`0")) {
             throw "Model Forge Compose service $ServiceName has an unexpected command."
         }
         $ExpectedEnvironment = @{
@@ -553,11 +709,11 @@ try {
             $ExpectedEnvironment['OIMS_FORGE_ENABLE_PROBE'] = '1'
         }
         $ObservedEnvironmentNames = @($Service.environment.PSObject.Properties.Name)
-        if (@(Compare-Object @($ExpectedEnvironment.Keys) $ObservedEnvironmentNames).Count -ne 0) {
+        if (@(Compare-Object @($ExpectedEnvironment.Keys) $ObservedEnvironmentNames -CaseSensitive).Count -ne 0) {
             throw "Model Forge Compose service $ServiceName has an unexpected environment variable."
         }
         foreach ($Name in $ExpectedEnvironment.Keys) {
-            if ([string]$Service.environment.$Name -ne [string]$ExpectedEnvironment[$Name]) {
+            if ([string]$Service.environment.$Name -cne [string]$ExpectedEnvironment[$Name]) {
                 throw "Model Forge Compose service $ServiceName has an unexpected environment value."
             }
         }
@@ -569,8 +725,8 @@ try {
         foreach ($Volume in $ObservedMounts) {
             $Target = [string]$Volume.target
             if (
-                [string]$Volume.type -ne 'bind' -or
-                -not $ExpectedMounts.ContainsKey($Target) -or
+                [string]$Volume.type -cne 'bind' -or
+                -not ($ExpectedMountTargets -ccontains $Target) -or
                 $SeenTargets.ContainsKey($Target)
             ) {
                 throw "Model Forge Compose service $ServiceName has an unexpected bind mount target."
@@ -583,7 +739,7 @@ try {
                 $ObservedReadOnly = [bool]$ReadOnlyProperty.Value
             }
             if (
-                [string]$Volume.source -ne [string]$ExpectedMount.Source -or
+                [string]$Volume.source -cne [string]$ExpectedMount.Source -or
                 $ObservedReadOnly -ne [bool]$ExpectedMount.ReadOnly
             ) {
                 throw "Model Forge Compose service $ServiceName has an unexpected bind mount source or mode."
@@ -601,6 +757,9 @@ try {
         $ResolvedCompose.services.$ServiceName.image = $ForgeImageId
     }
     $ExecutionCompose = $ResolvedCompose | ConvertTo-Json -Depth 100 -Compress
+    Assert-ForgeHostMountIdentity `
+        -ExpectedPaths $ExpectedHostPaths `
+        -ExpectedIdentities $ExpectedHostIdentities
 
     switch ($Mode) {
         'Validate' {

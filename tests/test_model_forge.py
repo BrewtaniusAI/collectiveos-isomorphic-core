@@ -2362,10 +2362,28 @@ def test_launcher_validates_complete_rendered_resource_policy() -> None:
     assert "Test-ForgeTmpfsPolicy $Service.tmpfs" in launcher
     assert "$DeviceReservations.Count -ne 1" in launcher
     assert "@('capabilities', 'device_ids', 'driver')" in launcher
-    assert "(@($Device.device_ids) -join ',') -ne [string]$GpuDeviceId" in launcher
+    assert "(@($Device.device_ids) -join ',') -cne [string]$GpuDeviceId" in launcher
     policy = launcher.index("$ObservedServiceProperties")
     build = launcher.index("$ForgeImageId = Invoke-ForgeImageBuild `")
     assert policy < build
+
+
+def test_launcher_binds_case_sensitive_mount_paths_and_revalidates_identity() -> None:
+    launcher = (ROOT / "scripts" / "run_model_forge.ps1").read_text(encoding="utf-8")
+
+    assert "function Get-ForgePathIdentity" in launcher
+    assert "GetFileInformationByHandle" in launcher
+    assert 'EntryPoint = "statx"' in launcher
+    assert "function Assert-ForgeHostMountIdentity" in launcher
+    assert "$CurrentPath -cne $ExpectedPath" in launcher
+    assert "$Volume.source -cne" in launcher
+    assert "$ExpectedMountTargets -ccontains $Target" in launcher
+    assert "Compare-Object $ExpectedServices $ObservedServices -CaseSensitive" in launcher
+    first_identity = launcher.index("$ExpectedHostIdentities[$Name] = Get-ForgePathIdentity")
+    build = launcher.index("$ForgeImageId = Invoke-ForgeImageBuild `")
+    revalidation = launcher.index("Assert-ForgeHostMountIdentity `", build)
+    execution = launcher.index("switch ($Mode)", revalidation)
+    assert first_identity < build < revalidation < execution
 
 
 def test_launcher_executes_validated_snapshot_without_ambient_mode_inputs() -> None:
@@ -2422,8 +2440,8 @@ def test_launcher_streams_exact_commit_into_direct_image_build() -> None:
         "                $DockerProcess.StandardInput.BaseStream"
     ) in launcher
     assert "$Service.PSObject.Properties['build']" in launcher
-    assert "[string]$Service.image -ne $ForgeImage" in launcher
-    assert "[string]$Service.pull_policy -ne 'never'" in launcher
+    assert "[string]$Service.image -cne $ForgeImage" in launcher
+    assert "[string]$Service.pull_policy -cne 'never'" in launcher
     assert "FORGE_BUILD_CONTEXT" not in launcher
     assert "--build simulate" not in launcher
     assert launcher.index("Invoke-ForgeImageBuild `") < launcher.index("switch ($Mode)")

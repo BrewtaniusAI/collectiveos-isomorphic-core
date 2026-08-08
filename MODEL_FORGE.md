@@ -179,10 +179,12 @@ a working-tree context, and the launcher rejects any resolved service, entrypoin
 context, sandbox setting, or bind mount outside the checked-in four-mount policy before starting
 Python. The host check covers the complete rendered service field allowlist, exact PID, RAM, swap,
 shared-memory, and tmpfs limits, and the probe's exact single-device NVIDIA reservation with no
-additional capability or device field. It then executes that exact rendered snapshot from memory
-rather than reparsing the mutable Compose path. The writable output host path must also be disjoint
-from the plan, model, and dataset sources, including every equality and ancestor/descendant alias.
-This keeps source and runtime evidence bound to the exact inspected bytes.
+additional capability or device field. Rendered Linux paths are compared case-sensitively. The
+launcher records OS filesystem identities for the plan and all three host directories, then
+re-resolves and rechecks both those identities and output/input disjointness after the image build
+and immediately before execution. It then executes that exact rendered snapshot from memory rather
+than reparsing the mutable Compose path. This keeps source and runtime evidence bound to the exact
+inspected host objects and bytes.
 
 Docker documents GPU reservations through `deploy.resources.reservations.devices`; the Forge
 sets `capabilities: [gpu]` and an explicit device ID. See
