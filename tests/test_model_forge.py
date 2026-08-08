@@ -2493,6 +2493,21 @@ def test_launcher_binds_case_sensitive_mount_paths_and_revalidates_identity() ->
     assert first_identity < build < revalidation < rebinding < execution
 
 
+def test_launcher_rejects_ancestor_and_descendant_backing_bind_aliases() -> None:
+    launcher = (ROOT / "scripts" / "run_model_forge.ps1").read_text(encoding="utf-8")
+
+    assert "LinuxBackingTreePath" in launcher
+    assert '"/proc/self/mountinfo"' in launcher
+    assert "mountId != buffer.MountId" in launcher
+    assert "Path.GetRelativePath(mountPoint, canonicalPath)" in launcher
+    assert "Path.Combine(mountRoot, relative)" in launcher
+    assert '"/oims-forge-backing/linux-{0:x8}-{1:x8}"' in launcher
+    assert "$CurrentSnapshot.BackingTreePath -cne" in launcher
+    assert "-Left $CurrentBackingTreePaths['Output']" in launcher
+    assert "-Right $CurrentBackingTreePaths[$ProtectedName]" in launcher
+    assert "backing tree must remain disjoint" in launcher
+
+
 def test_launcher_executes_validated_snapshot_without_ambient_mode_inputs() -> None:
     launcher = (ROOT / "scripts" / "run_model_forge.ps1").read_text(encoding="utf-8")
     receipt_clear = "[Environment]::SetEnvironmentVariable('FORGE_RECEIPT', $null, 'Process')"

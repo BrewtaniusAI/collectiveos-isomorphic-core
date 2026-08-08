@@ -64,6 +64,8 @@ function Get-ForgePathSnapshot {
         Add-Type -TypeDefinition @'
 using System;
 using System.ComponentModel;
+using System.Globalization;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
@@ -72,6 +74,7 @@ public sealed class OimsForgePathSnapshot : IDisposable
 {
     public string Identity { get; private set; }
     public string BackingIdentity { get; private set; }
+    public string BackingTreePath { get; private set; }
     public string CanonicalPath { get; private set; }
     public string BoundPath { get; private set; }
     private SafeFileHandle WindowsHandle;
@@ -80,12 +83,14 @@ public sealed class OimsForgePathSnapshot : IDisposable
     internal OimsForgePathSnapshot(
         string identity,
         string backingIdentity,
+        string backingTreePath,
         string canonicalPath,
         string boundPath,
         SafeFileHandle windowsHandle)
     {
         Identity = identity;
         BackingIdentity = backingIdentity;
+        BackingTreePath = backingTreePath;
         CanonicalPath = canonicalPath;
         BoundPath = boundPath;
         WindowsHandle = windowsHandle;
@@ -94,12 +99,14 @@ public sealed class OimsForgePathSnapshot : IDisposable
     internal OimsForgePathSnapshot(
         string identity,
         string backingIdentity,
+        string backingTreePath,
         string canonicalPath,
         string boundPath,
         int linuxDescriptor)
     {
         Identity = identity;
         BackingIdentity = backingIdentity;
+        BackingTreePath = backingTreePath;
         CanonicalPath = canonicalPath;
         BoundPath = boundPath;
         LinuxDescriptor = linuxDescriptor;
@@ -137,6 +144,8 @@ public static class OimsForgePathIdentity
     private const uint StatxMode = 0x00000002;
     private const uint StatxIno = 0x00000100;
     private const uint StatxMountId = 0x00001000;
+    private const int MaximumMountInfoLines = 65536;
+    private const int MaximumMountInfoLineLength = 1048576;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct ByHandleFileInformation
@@ -205,6 +214,84 @@ public static class OimsForgePathIdentity
         out StatxBuffer buffer
     );
 
+    private static string DecodeMountInfoPath(string value)
+    {
+        return value
+            .Replace("\\040", " ")
+            .Replace("\\011", "\t")
+            .Replace("\\012", "\n")
+            .Replace("\\134", "\\");
+    }
+
+    private static string LinuxBackingTreePath(StatxBuffer buffer, string canonicalPath)
+    {
+        string expectedDevice = String.Format(
+            CultureInfo.InvariantCulture,
+            "{0}:{1}",
+            buffer.DeviceMajor,
+            buffer.DeviceMinor
+        );
+        string mountRoot = null;
+        string mountPoint = null;
+        int lineCount = 0;
+        foreach (string line in File.ReadLines(
+            "/proc/self/mountinfo",
+            new UTF8Encoding(false, true)
+        ))
+        {
+            lineCount += 1;
+            if (lineCount > MaximumMountInfoLines || line.Length > MaximumMountInfoLineLength)
+                throw new InvalidOperationException("Host mount topology exceeds the supported bound.");
+            int separator = line.IndexOf(" - ", StringComparison.Ordinal);
+            string[] fields = (separator < 0 ? line : line.Substring(0, separator)).Split(
+                new[] { ' ' },
+                StringSplitOptions.RemoveEmptyEntries
+            );
+            ulong mountId;
+            if (
+                separator < 0 ||
+                fields.Length < 6 ||
+                !UInt64.TryParse(
+                    fields[0],
+                    NumberStyles.None,
+                    CultureInfo.InvariantCulture,
+                    out mountId
+                )
+            )
+                throw new InvalidOperationException("Host mount topology is malformed.");
+            if (mountId != buffer.MountId)
+                continue;
+            if (mountRoot != null || fields[2] != expectedDevice)
+                throw new InvalidOperationException("Host mount identity is ambiguous.");
+            mountRoot = DecodeMountInfoPath(fields[3]);
+            mountPoint = DecodeMountInfoPath(fields[4]);
+        }
+        if (
+            mountRoot == null ||
+            mountPoint == null ||
+            !Path.IsPathRooted(mountRoot) ||
+            !Path.IsPathRooted(mountPoint)
+        )
+            throw new InvalidOperationException("Host mount backing root cannot be verified.");
+        string relative = Path.GetRelativePath(mountPoint, canonicalPath);
+        if (
+            Path.IsPathRooted(relative) ||
+            relative == ".." ||
+            relative.StartsWith("../", StringComparison.Ordinal)
+        )
+            throw new InvalidOperationException("Host path is outside its authenticated mountpoint.");
+        string backingPath = Path.GetFullPath(
+            relative == "." ? mountRoot : Path.Combine(mountRoot, relative)
+        );
+        string deviceRoot = String.Format(
+            CultureInfo.InvariantCulture,
+            "/oims-forge-backing/linux-{0:x8}-{1:x8}",
+            buffer.DeviceMajor,
+            buffer.DeviceMinor
+        );
+        return backingPath == "/" ? deviceRoot : deviceRoot + backingPath;
+    }
+
     public static OimsForgePathSnapshot Capture(string path)
     {
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
@@ -245,6 +332,7 @@ public static class OimsForgePathIdentity
                 return new OimsForgePathSnapshot(
                     identity,
                     identity,
+                    canonicalPath.ToString(),
                     canonicalPath.ToString(),
                     path,
                     handle
@@ -311,6 +399,7 @@ public static class OimsForgePathIdentity
                 return new OimsForgePathSnapshot(
                     identity,
                     backingIdentity,
+                    LinuxBackingTreePath(buffer, canonicalPath),
                     canonicalPath,
                     boundPath,
                     fileDescriptor
@@ -318,7 +407,7 @@ public static class OimsForgePathIdentity
             }
             catch
             {
-                new OimsForgePathSnapshot("", "", "", "", fileDescriptor).Dispose();
+                new OimsForgePathSnapshot("", "", "", "", "", fileDescriptor).Dispose();
                 throw;
             }
         }
@@ -337,6 +426,7 @@ function Assert-ForgeHostMountIdentity {
     )
 
     $CurrentCanonicalPaths = @{}
+    $CurrentBackingTreePaths = @{}
     $BoundPaths = @{}
     foreach ($Name in $ExpectedPaths.Keys) {
         $ExpectedPath = [string]$ExpectedPaths[$Name]
@@ -348,11 +438,14 @@ function Assert-ForgeHostMountIdentity {
             if (
                 $CurrentPath -cne $ExpectedPath -or
                 [string]$CurrentSnapshot.Identity -cne [string]$ExpectedSnapshot.Identity -or
+                [string]$CurrentSnapshot.BackingTreePath -cne `
+                    [string]$ExpectedSnapshot.BackingTreePath -or
                 [string]$CurrentSnapshot.CanonicalPath -cne [string]$ExpectedSnapshot.CanonicalPath
             ) {
                 throw "Model Forge host mount identity changed before container launch: $Name"
             }
             $CurrentCanonicalPaths[$Name] = [string]$CurrentSnapshot.CanonicalPath
+            $CurrentBackingTreePaths[$Name] = [string]$CurrentSnapshot.BackingTreePath
             $BoundPaths[$Name] = [string]$ExpectedSnapshot.BoundPath
         }
         finally {
@@ -367,6 +460,13 @@ function Assert-ForgeHostMountIdentity {
             [string]$ExpectedSnapshots[$ProtectedName].BackingIdentity
         ) {
             throw 'OutputDir must not share a backing filesystem object with a protected input.'
+        }
+        if (
+            Test-PathsOverlap `
+                -Left $CurrentBackingTreePaths['Output'] `
+                -Right $CurrentBackingTreePaths[$ProtectedName]
+        ) {
+            throw 'OutputDir backing tree must remain disjoint from protected inputs.'
         }
         if (
             Test-PathsOverlap `
