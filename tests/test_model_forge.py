@@ -300,6 +300,62 @@ def test_malformed_plan_root_never_raises_from_public_validator() -> None:
         assert errors
 
 
+def test_malformed_selectors_fail_closed_across_public_boundaries() -> None:
+    for malformed in ([], {}):
+        simulation_plan = load_example()
+        simulation_plan["mode"] = malformed
+        decision = forge_plan_decision(simulation_plan)
+        assert decision["lawful"] is False
+        assert decision["mode"] is None
+        assert any("mode" in error for error in decision["errors"])
+
+        physical_plan = probe_plan()
+        resources = physical_plan["resources"]
+        assert isinstance(resources, dict)
+        domains = resources["memory_domains"]
+        assert isinstance(domains, list)
+        domains[0]["kind"] = malformed
+        errors = validate_forge_plan(physical_plan)
+        assert any("kind" in error for error in errors)
+        receipt = inspect_physical_preflight(
+            physical_plan,
+            accepted_plan_hash=physical_plan["plan_hash"],
+            environment={},
+        )
+        assert receipt["lawful"] is False
+        assert receipt["qmf_admissible"] is False
+
+
+def test_non_json_public_inputs_return_refusals_instead_of_raising() -> None:
+    malformed_plan = probe_plan()
+    malformed_plan["plan_id"] = object()
+    decision = forge_plan_decision(malformed_plan)
+    assert decision["lawful"] is False
+    receipt = inspect_physical_preflight(
+        malformed_plan,
+        accepted_plan_hash=malformed_plan["plan_hash"],
+        environment={},
+    )
+    assert receipt["lawful"] is False
+    assert receipt["plan_id"] is None
+
+    root_receipt = inspect_physical_preflight(
+        None,
+        accepted_plan_hash="",
+        environment={},
+    )
+    assert root_receipt["lawful"] is False
+    assert root_receipt["plan_hash"] is None
+
+    environment_receipt = inspect_physical_preflight(
+        probe_plan(),
+        accepted_plan_hash="",
+        environment=[],
+    )
+    assert environment_receipt["lawful"] is False
+    assert "Forge environment must be a mapping" in environment_receipt["errors"]
+
+
 def test_probe_mode_refuses_simulation_payload() -> None:
     plan = load_example()
     plan["mode"] = "probe"

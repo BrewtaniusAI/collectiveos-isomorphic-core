@@ -346,11 +346,14 @@ def _is_immutable_image_ref(value: object) -> bool:
 
 
 def forge_container_environment_errors(
-    environment: dict[str, str] | None = None,
+    environment: object = None,
     *,
     require_probe_unlock: bool = False,
 ) -> tuple[str, ...]:
-    env = environment if environment is not None else dict(os.environ)
+    env = environment if isinstance(environment, dict) else dict(os.environ)
+    errors = []
+    if environment is not None and not isinstance(environment, dict):
+        errors.append("Forge environment must be a mapping")
     required = {
         "OIMS_FORGE_CONTAINER": "1",
         "HF_HUB_OFFLINE": "1",
@@ -359,11 +362,11 @@ def forge_container_environment_errors(
     }
     if require_probe_unlock:
         required["OIMS_FORGE_ENABLE_PROBE"] = "1"
-    errors = [
+    errors.extend(
         f"required Forge environment {name}={expected!r} is missing"
         for name, expected in required.items()
         if env.get(name) != expected
-    ]
+    )
     if not _is_immutable_image_ref(env.get("OIMS_FORGE_BASE_IMAGE")):
         errors.append("OIMS_FORGE_BASE_IMAGE is not pinned by an immutable SHA-256 digest")
     if not _is_revision(env.get("OIMS_FORGE_SOURCE_COMMIT")):
@@ -413,11 +416,11 @@ def _check_keys(
         return None
     observed = set(value)
     missing = sorted(expected - observed)
-    extra = sorted(observed - expected)
+    extra = sorted(observed - expected, key=lambda item: str(item))
     if missing:
         errors.append(f"{path} is missing fields: {', '.join(missing)}")
     if extra:
-        errors.append(f"{path} has unknown fields: {', '.join(extra)}")
+        errors.append(f"{path} has unknown fields: {', '.join(str(item) for item in extra)}")
     return value
 
 
@@ -459,9 +462,13 @@ def validate_forge_plan(plan: object) -> tuple[str, ...]:
     if not isinstance(root.get("plan_id"), str) or not root["plan_id"].strip():
         errors.append("plan_id must be a non-empty string")
     mode = root.get("mode")
-    if mode not in {"simulate", "probe"}:
+    if not isinstance(mode, str) or mode not in {"simulate", "probe"}:
         errors.append("mode must be 'simulate' or 'probe'")
-    expected_evidence = {"simulate": "SIMULATED", "probe": "PHYSICAL_PREFLIGHT"}.get(mode)
+    expected_evidence = (
+        {"simulate": "SIMULATED", "probe": "PHYSICAL_PREFLIGHT"}.get(mode)
+        if isinstance(mode, str)
+        else None
+    )
     if root.get("evidence_class") != expected_evidence:
         errors.append("evidence_class does not match the selected mode")
 
@@ -566,7 +573,7 @@ def validate_forge_plan(plan: object) -> tuple[str, ...]:
                     errors.append(f"resources.memory_domains[{index}].id is invalid")
                 else:
                     identifiers.append(identifier)
-                if kind not in {"gpu-vram", "host-ram"}:
+                if not isinstance(kind, str) or kind not in {"gpu-vram", "host-ram"}:
                     errors.append(f"resources.memory_domains[{index}].kind is invalid")
                 capacity = domain.get("capacity_bytes")
                 _check_positive_int(
@@ -740,6 +747,7 @@ def forge_plan_decision(plan: object) -> dict[str, Any]:
     errors = validate_forge_plan(plan)
     plan_hash = plan.get("plan_hash") if isinstance(plan, dict) else None
     mode = plan.get("mode") if isinstance(plan, dict) else None
+    evidence_class = plan.get("evidence_class") if isinstance(plan, dict) else None
     record = {
         "@context": "https://oims.collective-osp.org/model-forge/v1",
         "@type": "OIMSModelForgePlanDecision",
@@ -747,9 +755,9 @@ def forge_plan_decision(plan: object) -> dict[str, Any]:
         "status": "ACCEPTED" if not errors else "REFUSED",
         "lawful": not errors,
         "should_execute": not errors,
-        "mode": mode,
+        "mode": mode if isinstance(mode, str) else None,
         "plan_hash": plan_hash if _is_digest(plan_hash) else None,
-        "evidence_class": plan.get("evidence_class") if isinstance(plan, dict) else None,
+        "evidence_class": evidence_class if isinstance(evidence_class, str) else None,
         "qmf_admissible": False,
         "governance_route": GOVERNANCE_ROUTE,
         "errors": list(errors),
@@ -1275,19 +1283,22 @@ def _cgroup_limits() -> dict[str, int | None]:
 
 
 def inspect_physical_preflight(
-    plan: dict[str, Any],
+    plan: object,
     *,
     accepted_plan_hash: str,
-    environment: dict[str, str] | None = None,
+    environment: object = None,
 ) -> dict[str, Any]:
     """Inspect a locked sandbox without loading weights or starting training."""
 
     errors = list(validate_forge_plan(plan))
-    if plan.get("mode") != "probe":
+    root = plan if isinstance(plan, dict) else {}
+    if root.get("mode") != "probe":
         errors.append("only a probe plan can enter physical preflight")
-    if accepted_plan_hash != plan.get("plan_hash"):
+    if accepted_plan_hash != root.get("plan_hash"):
         errors.append("accepted plan hash does not match the exact Forge plan")
-    env = environment if environment is not None else dict(os.environ)
+    if environment is not None and not isinstance(environment, dict):
+        errors.append("Forge environment must be a mapping")
+    env = environment if isinstance(environment, dict) else dict(os.environ)
     errors.extend(forge_container_environment_errors(env, require_probe_unlock=True))
     base_image_pinned = _is_immutable_image_ref(env.get("OIMS_FORGE_BASE_IMAGE"))
 
@@ -1323,7 +1334,7 @@ def inspect_physical_preflight(
     if swap_total < 0 or swap_free < 0 or swap_total != swap_free:
         errors.append("swap is active or cannot be proven unused")
     host_memory = memory.get("MemTotal")
-    resources = plan.get("resources")
+    resources = root.get("resources")
     host_limit = resources.get("max_peak_host_bytes") if isinstance(resources, dict) else None
     if not _is_int(host_memory, minimum=1) or (
         _is_int(host_limit, minimum=1) and host_memory < host_limit
@@ -1342,7 +1353,7 @@ def inspect_physical_preflight(
     if not errors:
         command = [
             "nvidia-smi",
-            f"--id={plan['resources']['device_id']}",
+            f"--id={root['resources']['device_id']}",
             "--query-gpu=uuid,name,memory.total,memory.used,temperature.gpu,power.draw,power.limit",
             "--format=csv,noheader,nounits",
         ]
@@ -1381,7 +1392,7 @@ def inspect_physical_preflight(
                     }
                     declared_device_bytes = next(
                         domain["capacity_bytes"]
-                        for domain in plan["resources"]["memory_domains"]
+                        for domain in root["resources"]["memory_domains"]
                         if domain["kind"] == "gpu-vram"
                     )
                     if fields[1] != "NVIDIA GeForce RTX 4090":
@@ -1390,17 +1401,17 @@ def inspect_physical_preflight(
                         errors.append(
                             "physical GPU memory does not match the declared memory domain"
                         )
-                    if total_bytes - used_bytes < plan["resources"]["max_peak_device_bytes"]:
+                    if total_bytes - used_bytes < root["resources"]["max_peak_device_bytes"]:
                         errors.append("available GPU memory is below the plan's device ceiling")
-                    if temperature > plan["resources"]["max_temperature_millic"]:
+                    if temperature > root["resources"]["max_temperature_millic"]:
                         errors.append("physical GPU temperature exceeds the plan ceiling")
 
     receipt = {
         "@context": "https://oims.collective-osp.org/model-forge/v1",
         "@type": "OIMSModelForgePreflightReceipt",
         "schema_version": FORGE_SCHEMA_VERSION,
-        "plan_id": plan.get("plan_id"),
-        "plan_hash": plan.get("plan_hash"),
+        "plan_id": root.get("plan_id") if isinstance(root.get("plan_id"), str) else None,
+        "plan_hash": root.get("plan_hash") if _is_digest(root.get("plan_hash")) else None,
         "mode": "probe",
         "status": "READY" if not errors else "REFUSED",
         "lawful": not errors,
