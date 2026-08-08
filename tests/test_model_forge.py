@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import importlib.util
 import json
-import marshal
 import stat
 import subprocess
 from pathlib import Path
@@ -11,6 +9,7 @@ from unittest.mock import patch
 import pytest
 import yaml
 
+import oims.model_forge as model_forge_module
 from forge.oims_forge_entrypoint import package_digest as entrypoint_package_digest
 from forge.oims_forge_entrypoint import protected_mount_errors, verify_installed_package
 from oims.cli import main as cli_main
@@ -18,9 +17,9 @@ from oims.manifest import ROOT
 from oims.model_forge import (
     EXPECTED_TARGET_PARAMETERS,
     ForgePlanError,
-    _direct_source_bytecode_is_trusted,
     _forge_mount_policy,
     _installed_package_digest,
+    _verified_execution_source,
     compute_plan_hash,
     forge_container_environment_errors,
     forge_plan_decision,
@@ -36,6 +35,22 @@ from oims.proof import seal_record
 
 EXAMPLE = ROOT / "forge" / "examples" / "gpt-oss-20b-4090-simulation.plan.json"
 PROBE_EXAMPLE = ROOT / "forge" / "examples" / "gpt-oss-20b-4090-probe.plan.json"
+TEST_VERIFIED_SOURCE = ("a" * 40, "b" * 40)
+
+
+@pytest.fixture(autouse=True)
+def attested_source_for_forge_exercises(
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
+) -> None:
+    if request.node.get_closest_marker("direct_source"):
+        return
+    original = model_forge_module._verified_execution_source
+
+    def verified_source(environment: dict[str, str] | None = None) -> tuple[str, str] | None:
+        return TEST_VERIFIED_SOURCE if environment is None else original(environment)
+
+    monkeypatch.setattr(model_forge_module, "_verified_execution_source", verified_source)
 
 
 def load_example() -> dict[str, object]:
@@ -73,21 +88,9 @@ def test_checked_in_probe_plan_is_exact_and_non_training() -> None:
     assert decision["qmf_admissible"] is False
 
 
+@pytest.mark.direct_source
 def test_plan_decision_omits_unverified_source_provenance() -> None:
-    dirty = subprocess.CompletedProcess(
-        args=["git", "status"],
-        returncode=0,
-        stdout=" M oims/model_forge.py\n",
-        stderr="",
-    )
-    with (
-        patch.dict(
-            "oims.model_forge.os.environ",
-            {"OIMS_FORGE_SOURCE_COMMIT": "a" * 40},
-            clear=True,
-        ),
-        patch("oims.model_forge.subprocess.run", return_value=dirty),
-    ):
+    with patch.dict("oims.model_forge.os.environ", {}, clear=True):
         decision = forge_plan_decision(load_example())
     assert decision["lawful"] is True
     assert decision["source_commit"] is None
@@ -389,10 +392,7 @@ def test_receipt_input_path_fails_closed_on_embedded_nul() -> None:
 
 def test_probe_requires_exact_dual_unlock_before_device_inspection() -> None:
     plan = probe_plan()
-    with (
-        patch("oims.model_forge.current_git_commit", return_value="a" * 40),
-        patch("oims.model_forge.subprocess.run") as run,
-    ):
+    with patch("oims.model_forge.subprocess.run") as run:
         result = inspect_physical_preflight(
             plan,
             accepted_plan_hash="sha256:" + "0" * 64,
@@ -551,7 +551,6 @@ def test_probe_can_prove_a_locked_4090_sandbox_without_training(
         ),
         patch("oims.model_forge.os.geteuid", return_value=65532),
         patch("oims.model_forge._container_source_attestation_errors", return_value=()),
-        patch("oims.model_forge.current_git_commit", return_value="a" * 40),
         patch("oims.model_forge.subprocess.run", return_value=completed) as run,
     ):
         result = inspect_physical_preflight(
@@ -727,88 +726,48 @@ def test_simulation_clock_requires_exact_rfc3339(clock_start: str) -> None:
     assert "simulation.clock_start must be timezone-aware RFC3339" in validate_forge_plan(plan)
 
 
-def test_direct_simulation_refuses_dirty_source_before_writing(tmp_path: Path) -> None:
-    dirty = subprocess.CompletedProcess(
-        args=["git", "status"],
-        returncode=0,
-        stdout=" M oims/model_forge.py\n",
-        stderr="",
-    )
+@pytest.mark.direct_source
+def test_direct_simulation_refuses_unattested_source_before_writing(tmp_path: Path) -> None:
+    with (
+        patch.dict("oims.model_forge.os.environ", {}, clear=True),
+        patch("oims.model_forge.subprocess.run") as git,
+        pytest.raises(ForgePlanError, match="attested isolated container source"),
+    ):
+        simulate_forge_run(load_example(), artifacts_dir=tmp_path)
+    assert not list(tmp_path.iterdir())
+    git.assert_not_called()
+
+
+@pytest.mark.direct_source
+def test_direct_source_rejects_git_repository_environment_overrides() -> None:
     with (
         patch.dict(
             "oims.model_forge.os.environ",
-            {
-                "OIMS_FORGE_CONTAINER": "1",
-                "HF_HUB_OFFLINE": "1",
-                "TRANSFORMERS_OFFLINE": "1",
-                "HF_DATASETS_OFFLINE": "1",
-                "OIMS_FORGE_BASE_IMAGE": "python:3.12-slim@sha256:" + "a" * 64,
-                "OIMS_FORGE_SOURCE_COMMIT": "a" * 40,
-                "OIMS_FORGE_SOURCE_TREE": "b" * 40,
-            },
+            {"GIT_DIR": "/alternate/.git", "GIT_WORK_TREE": "/alternate"},
             clear=True,
         ),
-        patch("oims.model_forge.subprocess.run", return_value=dirty),
-        pytest.raises(ForgePlanError, match="clean Git working tree"),
+        patch("oims.model_forge.subprocess.run") as git,
     ):
-        simulate_forge_run(load_example(), artifacts_dir=tmp_path)
-    assert not list(tmp_path.iterdir())
+        assert _verified_execution_source() is None
+    git.assert_not_called()
 
 
-def test_direct_simulation_refuses_index_hidden_source_changes(tmp_path: Path) -> None:
-    clean_status = subprocess.CompletedProcess(
-        args=["git", "status"],
-        returncode=0,
-        stdout="",
-        stderr="",
-    )
-    hidden_index = subprocess.CompletedProcess(
-        args=["git", "ls-files"],
-        returncode=0,
-        stdout="h oims/model_forge.py\0",
-        stderr="",
-    )
+@pytest.mark.direct_source
+def test_direct_verification_refuses_unattested_loaded_source(tmp_path: Path) -> None:
+    with patch("oims.model_forge._verified_execution_source", return_value=TEST_VERIFIED_SOURCE):
+        receipt = simulate_forge_run(load_example(), artifacts_dir=tmp_path)
+    receipt_path = tmp_path / receipt["run_id"] / "receipt.json"
     with (
         patch.dict("oims.model_forge.os.environ", {}, clear=True),
-        patch("oims.model_forge.subprocess.run", side_effect=[clean_status, hidden_index]),
-        pytest.raises(ForgePlanError, match="clean Git working tree"),
+        patch("oims.model_forge.subprocess.run") as git,
     ):
-        simulate_forge_run(load_example(), artifacts_dir=tmp_path)
-    assert not list(tmp_path.iterdir())
-
-
-def test_direct_source_refuses_modified_ignored_bytecode(tmp_path: Path) -> None:
-    package_root = tmp_path / "oims"
-    source = package_root / "module.py"
-    source.parent.mkdir()
-    source.write_text("trusted = True\n", encoding="utf-8")
-    cache = Path(importlib.util.cache_from_source(str(source)))
-    cache.parent.mkdir()
-    trusted = compile(source.read_bytes(), str(source), "exec", dont_inherit=True)
-    cache.write_bytes(importlib.util.MAGIC_NUMBER + b"\0" * 12 + marshal.dumps(trusted))
-    assert _direct_source_bytecode_is_trusted(package_root) is True
-
-    malicious = compile("trusted = False\n", str(source), "exec", dont_inherit=True)
-    cache.write_bytes(importlib.util.MAGIC_NUMBER + b"\0" * 12 + marshal.dumps(malicious))
-
-    assert _direct_source_bytecode_is_trusted(package_root) is False
-
-
-def test_direct_simulation_refuses_untrusted_ignored_bytecode(tmp_path: Path) -> None:
-    clean = subprocess.CompletedProcess(
-        args=["git"],
-        returncode=0,
-        stdout="",
-        stderr="",
+        result = verify_forge_run(receipt_path)
+    assert result["valid"] is False
+    assert any(
+        "provenance does not match the verified execution source" in error
+        for error in result["errors"]
     )
-    with (
-        patch.dict("oims.model_forge.os.environ", {}, clear=True),
-        patch("oims.model_forge.subprocess.run", side_effect=[clean, clean]),
-        patch("oims.model_forge._direct_source_bytecode_is_trusted", return_value=False),
-        pytest.raises(ForgePlanError, match="clean Git working tree"),
-    ):
-        simulate_forge_run(load_example(), artifacts_dir=tmp_path)
-    assert not list(tmp_path.iterdir())
+    git.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -933,7 +892,6 @@ def test_probe_requires_current_memory_headroom(
         ),
         patch("oims.model_forge.os.geteuid", return_value=65532),
         patch("oims.model_forge._container_source_attestation_errors", return_value=()),
-        patch("oims.model_forge.current_git_commit", return_value="a" * 40),
         patch("oims.model_forge.subprocess.run") as run,
     ):
         result = inspect_physical_preflight(
@@ -999,7 +957,6 @@ def test_probe_requires_process_level_output_write() -> None:
         ),
         patch("oims.model_forge.os.geteuid", return_value=65532),
         patch("oims.model_forge._container_source_attestation_errors", return_value=()),
-        patch("oims.model_forge.current_git_commit", return_value="a" * 40),
         patch("oims.model_forge.subprocess.run") as run,
     ):
         result = inspect_physical_preflight(
@@ -1359,6 +1316,11 @@ def test_oci_boundary_is_offline_unprivileged_and_non_training() -> None:
     assert "archive --format=tar" in launcher
     assert "$env:FORGE_BUILD_CONTEXT = $BuildContext" in launcher
     assert "Model Forge refuses a dirty build context" in launcher
+    assert "repository-affecting Git environment overrides" in launcher
+    assert "GIT_DIR" in launcher
+    assert "GIT_WORK_TREE" in launcher
+    assert "rev-parse --show-toplevel" in launcher
+    assert "Git did not resolve the expected Model Forge worktree" in launcher
     assert "SourceCommit does not match the repository HEAD" in launcher
     assert "$env:FORGE_SOURCE_TREE = $SourceTree" in launcher
     runtime_lock = (ROOT / "requirements" / "forge-runtime.lock").read_text(encoding="utf-8")
@@ -1380,12 +1342,11 @@ def test_forge_receipt_schemas_refuse_undeclared_fields_and_match_runtime(tmp_pa
         (ROOT / "schemas" / "model-forge-preflight-receipt.schema.json").read_text(encoding="utf-8")
     )
     plan = probe_plan()
-    with patch("oims.model_forge.current_git_commit", return_value="a" * 40):
-        preflight_receipt = inspect_physical_preflight(
-            plan,
-            accepted_plan_hash="sha256:" + "0" * 64,
-            environment={},
-        )
+    preflight_receipt = inspect_physical_preflight(
+        plan,
+        accepted_plan_hash="sha256:" + "0" * 64,
+        environment={},
+    )
     assert preflight_schema["additionalProperties"] is False
     assert set(preflight_schema["required"]) == set(preflight_schema["properties"])
     assert set(preflight_receipt) == set(preflight_schema["properties"])

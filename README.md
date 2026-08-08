@@ -105,12 +105,12 @@ physical preflight evidence.
 ```bash
 python -m oims forge validate \
   --plan forge/examples/gpt-oss-20b-4090-simulation.plan.json
-python -m oims forge simulate \
-  --plan forge/examples/gpt-oss-20b-4090-simulation.plan.json \
-  --output artifacts/model-forge
 ```
 
-See `MODEL_FORGE.md` for the WSL2/Docker/RTX 4090 flow and the exact promotion boundary.
+Direct working-tree execution is validation-only. Simulation, physical probing, and receipt
+verification require the isolated launcher-built container so provenance is checked before any
+project code is imported. See `MODEL_FORGE.md` for the WSL2/Docker/RTX 4090 flow and the exact
+promotion boundary.
 
 ## Download and run the whole family
 

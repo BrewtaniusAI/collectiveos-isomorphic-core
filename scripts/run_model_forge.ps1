@@ -44,6 +44,34 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
 if (-not (Get-Command tar -ErrorAction SilentlyContinue)) {
     throw 'tar is required to export the exact Model Forge commit as the Docker build context.'
 }
+$RepositoryAffectingGitEnvironment = @(
+    'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+    'GIT_CEILING_DIRECTORIES',
+    'GIT_COMMON_DIR',
+    'GIT_DIR',
+    'GIT_DISCOVERY_ACROSS_FILESYSTEM',
+    'GIT_INDEX_FILE',
+    'GIT_NAMESPACE',
+    'GIT_OBJECT_DIRECTORY',
+    'GIT_PREFIX',
+    'GIT_WORK_TREE'
+)
+$ActiveGitOverrides = @(
+    Get-ChildItem Env: | Where-Object {
+        $RepositoryAffectingGitEnvironment -contains $_.Name -or $_.Name -like 'GIT_CONFIG_*'
+    }
+)
+if ($ActiveGitOverrides.Count -ne 0) {
+    throw 'Model Forge refuses repository-affecting Git environment overrides.'
+}
+$ResolvedWorkTree = (& git -C $RepositoryRoot rev-parse --show-toplevel).Trim()
+if ($LASTEXITCODE -ne 0 -or -not $ResolvedWorkTree) {
+    throw 'Could not resolve the Model Forge Git worktree.'
+}
+$ResolvedWorkTree = (Resolve-Path -LiteralPath $ResolvedWorkTree).Path
+if ($ResolvedWorkTree -ne $RepositoryRoot) {
+    throw 'Git did not resolve the expected Model Forge worktree.'
+}
 $HeadCommit = (& git -C $RepositoryRoot rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0) {
     throw "Could not resolve the Model Forge source commit (exit $LASTEXITCODE)."

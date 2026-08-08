@@ -57,31 +57,11 @@ python -m oims forge validate `
   --plan forge/examples/gpt-oss-20b-4090-simulation.plan.json
 ```
 
-Run a simulation without Docker:
-
-```powershell
-python -m oims forge simulate `
-  --plan forge/examples/gpt-oss-20b-4090-simulation.plan.json `
-  --output artifacts/model-forge
-```
-
-The direct simulation path requires either a launcher-built image with a matching read-only source
-commit/tree attestation or a clean Git working tree whose commit and tree can both be resolved. It
-also verifies every ignored `oims` bytecode cache compiles exactly from its corresponding source and
-refuses non-source, malformed, or modified executable caches. It refuses before creating the run
-directory when executed from dirty or unprovable source, preventing receipts from attributing
-modified code to a clean `HEAD`.
-
-Verify the returned receipt and every linked telemetry/checkpoint/candidate artifact:
-
-```powershell
-python -m oims forge verify `
-  --receipt artifacts/model-forge/sim-783d6fd324c9fb78/receipt.json
-```
-
-Verification must run from the same clean source commit/tree that produced the receipt, or from its
-launcher-built image with the matching fixed attestation. A receipt cannot be relabeled to another
-valid Git commit/tree pair and verified from the original producer source.
+Direct working-tree execution is intentionally limited to plan validation. Simulation and receipt
+verification refuse outside the isolated launcher-built container because already-imported project
+code cannot safely attest its own source. The container's external pre-import verifier must establish
+the installed package, commit, tree, interpreter, dependency, and mount boundaries before either
+operation can emit or accept evidence. Use the launcher flow below for simulation and verification.
 
 The simulation writes no `adapter_config.json` or `adapter_model.safetensors`. Its candidate is
 named `synthetic-candidate.json` and contains explicit `not_a_model`, `not_a_peft_adapter`, and

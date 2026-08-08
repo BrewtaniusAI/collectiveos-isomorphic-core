@@ -19,9 +19,7 @@ and an independently approved QMF plan exist.
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import json
-import marshal
 import math
 import os
 import re
@@ -31,11 +29,10 @@ import sys
 import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path, PurePosixPath
-from types import CodeType
 from typing import Any
 
 from .manifest import ROOT
-from .proof import atomic_write_json, current_git_commit, seal_record, verify_sealed_record
+from .proof import atomic_write_json, seal_record, verify_sealed_record
 
 FORGE_SCHEMA_VERSION = "1.0.0"
 QMF_DERIVATION_VERSION = "10.0.0"
@@ -459,57 +456,6 @@ def _imported_source_is_isolated() -> bool:
     )
 
 
-def _direct_source_bytecode_is_trusted(package_root: Path | None = None) -> bool:
-    try:
-        root = (package_root or Path(__file__).parent).resolve(strict=True)
-        for path in root.rglob("*"):
-            relative = path.relative_to(root)
-            executable_cache = "__pycache__" in relative.parts or path.suffix in {
-                ".pyc",
-                ".pyd",
-                ".pyo",
-            }
-            if not executable_cache:
-                continue
-            if path.is_symlink():
-                return False
-            if path.is_dir():
-                continue
-            if not path.is_file() or path.suffix != ".pyc":
-                return False
-            bytecode = path.read_bytes()
-            if len(bytecode) < 16 or bytecode[:4] != importlib.util.MAGIC_NUMBER:
-                return False
-            flags = int.from_bytes(bytecode[4:8], "little")
-            if flags not in {0, 1, 3}:
-                return False
-            code = marshal.loads(bytecode[16:])
-            if not isinstance(code, CodeType):
-                return False
-            if "__pycache__" in relative.parts:
-                source = Path(importlib.util.source_from_cache(str(path)))
-            else:
-                source = path.with_suffix(".py")
-            source = source.resolve(strict=True)
-            if root != source and root not in source.parents:
-                return False
-            optimization = re.search(r"\.opt-([12])\.pyc$", path.name)
-            expected = compile(
-                source.read_bytes(),
-                code.co_filename,
-                "exec",
-                dont_inherit=True,
-                optimize=int(optimization.group(1)) if optimization else 0,
-            )
-            # CodeType equality compares executable structure recursively without depending on
-            # marshal reference-table ordering, which differs across supported Python versions.
-            if expected != code:
-                return False
-    except (EOFError, OSError, RuntimeError, SyntaxError, TypeError, UnicodeError, ValueError):
-        return False
-    return True
-
-
 def forge_container_environment_errors(
     environment: object = None,
     *,
@@ -546,59 +492,9 @@ def _verified_execution_source(
     environment: dict[str, str] | None = None,
 ) -> tuple[str, str] | None:
     env = environment if environment is not None else dict(os.environ)
-    if env.get("OIMS_FORGE_CONTAINER") == "1":
-        if not forge_container_environment_errors(env):
-            return env["OIMS_FORGE_SOURCE_COMMIT"], env["OIMS_FORGE_SOURCE_TREE"]
-        return None
-    try:
-        completed = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(ROOT),
-                "status",
-                "--porcelain=v1",
-                "--untracked-files=all",
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if completed.stdout.strip():
-        return None
-    try:
-        index_flags = subprocess.run(
-            ["git", "-C", str(ROOT), "ls-files", "-v", "-z"],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    tracked_entries = [entry for entry in index_flags.stdout.split("\0") if entry]
-    if any(not entry.startswith("H ") for entry in tracked_entries):
-        return None
-    if not _direct_source_bytecode_is_trusted():
-        return None
-    commit = current_git_commit(ROOT)
-    if not _is_revision(commit):
-        return None
-    try:
-        tree_result = subprocess.run(
-            ["git", "-C", str(ROOT), "rev-parse", f"{commit}^{{tree}}"],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-    except (OSError, subprocess.SubprocessError):
-        return None
-    tree = tree_result.stdout.strip()
-    return (commit, tree) if _is_revision(tree) else None
+    if env.get("OIMS_FORGE_CONTAINER") == "1" and not forge_container_environment_errors(env):
+        return env["OIMS_FORGE_SOURCE_COMMIT"], env["OIMS_FORGE_SOURCE_TREE"]
+    return None
 
 
 def _strict_json_loads(text: str) -> object:
@@ -1080,9 +976,7 @@ def simulate_forge_run(
         raise ForgePlanError("only a simulate plan can enter the simulation lane")
     provenance = _verified_execution_source()
     if provenance is None:
-        raise ForgePlanError(
-            "Forge simulation requires an attested container source or a clean Git working tree"
-        )
+        raise ForgePlanError("Forge simulation requires an attested isolated container source")
     source_commit, source_tree = provenance
 
     plan_hash = plan["plan_hash"]
