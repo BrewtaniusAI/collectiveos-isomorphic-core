@@ -133,10 +133,11 @@ tracked or untracked working-tree change, rejects assume-unchanged/skip-worktree
 uses `git archive` to construct a temporary Docker context from that exact commit. It records the
 exported commit and Git tree in an attestation outside the installed package. The build installs
 that package into the interpreter prefix, removes its temporary source tree, and launches Python in
-isolated mode from `/forge`; the non-root runtime must match the attestation and prove that the
+isolated, site-disabled mode from `/forge`; the non-root runtime must match the attestation and prove that the
 imported module is isolated from `/workspace` before using the container provenance shortcut.
 Before importing any project code, an external isolated entrypoint hashes every installed `oims`
-package byte and compares it with a digest sealed into the build attestation; the in-package check
+package byte and compares it with a digest sealed into the build attestation. Only then does a
+site-disabled bootstrap add the authenticated package directory for import; the in-package check
 repeats that comparison as defense in depth. Both attestation readers use a nonblocking, bounded
 regular-file descriptor rather than a path-based metadata/read sequence. The entrypoint also reads `/proc/self/mountinfo` and
 `/proc/self/maps`. It refuses any mount covering or nested beneath the interpreter prefix,

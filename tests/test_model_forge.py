@@ -7,6 +7,7 @@ import json
 import os
 import stat
 import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -2132,6 +2133,7 @@ def test_preimport_probe_passes_nvidia_attestation_to_runtime(
 ) -> None:
     digest = "sha256:" + "e" * 64
     records = ((Path("/usr/bin/nvidia-smi"), frozenset({"ro"})),)
+    package_root = Path("/usr/local/lib/python/site-packages/oims")
     monkeypatch.delenv("OIMS_FORGE_NVIDIA_RUNTIME_SHA256", raising=False)
     monkeypatch.setenv("OIMS_FORGE_NVIDIA_SMI_PATH", "/forge/inputs/base/nvidia-smi")
 
@@ -2143,6 +2145,7 @@ def test_preimport_probe_passes_nvidia_attestation_to_runtime(
             return_value=((records[0][0],), digest),
         ),
         patch.object(forge_entrypoint, "verify_installed_package", return_value=()),
+        patch.object(forge_entrypoint, "installed_package_root", return_value=package_root),
         patch.object(forge_entrypoint.os, "execv", side_effect=OSError("exec intercepted")),
         pytest.raises(OSError, match="exec intercepted"),
     ):
@@ -2160,7 +2163,16 @@ def test_preimport_simulation_authenticates_runtime_observation_sources() -> Non
         patch.object(forge_entrypoint, "_mount_records", return_value=records),
         patch.object(forge_entrypoint, "_cgroup_membership", return_value="/"),
         patch.object(forge_entrypoint, "verify_installed_package", return_value=()) as verify,
-        patch.object(forge_entrypoint.os, "execv", side_effect=OSError("exec intercepted")),
+        patch.object(
+            forge_entrypoint,
+            "installed_package_root",
+            return_value=Path("/usr/local/lib/python/site-packages/oims"),
+        ),
+        patch.object(
+            forge_entrypoint.os,
+            "execv",
+            side_effect=OSError("exec intercepted"),
+        ) as execute,
         pytest.raises(OSError, match="exec intercepted"),
     ):
         forge_entrypoint.main(["forge", "simulate"])
@@ -2168,6 +2180,62 @@ def test_preimport_simulation_authenticates_runtime_observation_sources() -> Non
     assert verify.call_args.kwargs["observed_mount_records"] == records
     assert verify.call_args.kwargs["protect_sandbox_observations"] is True
     assert verify.call_args.kwargs["cgroup_membership"] == "/"
+    assert execute.call_args.args[1][:5] == [
+        sys.executable,
+        "-I",
+        "-S",
+        "-c",
+        forge_entrypoint.VERIFIED_PACKAGE_BOOTSTRAP,
+    ]
+
+
+def test_verified_package_bootstrap_never_processes_site_hooks(tmp_path: Path) -> None:
+    trusted_root = tmp_path / "trusted-site-packages"
+    package_root = trusted_root / "oims"
+    package_root.mkdir(parents=True)
+    sitecustomize_marker = tmp_path / "sitecustomize-ran"
+    pth_marker = tmp_path / "pth-ran"
+    (trusted_root / "sitecustomize.py").write_text(
+        f"from pathlib import Path\nPath({str(sitecustomize_marker)!r}).touch()\n",
+        encoding="utf-8",
+    )
+    (trusted_root / "attack.pth").write_text(
+        f"import pathlib; pathlib.Path({str(pth_marker)!r}).touch()\n",
+        encoding="utf-8",
+    )
+    (package_root / "__init__.py").write_text("", encoding="utf-8")
+    (package_root / "__main__.py").write_text(
+        "import json, sys\n"
+        "print(json.dumps({'argv': sys.argv[1:], "
+        "'isolated': sys.flags.isolated, 'no_site': sys.flags.no_site}))\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-S",
+            "-c",
+            forge_entrypoint.VERIFIED_PACKAGE_BOOTSTRAP,
+            str(trusted_root),
+            "forge",
+            "validate",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {
+        "argv": ["forge", "validate"],
+        "isolated": 1,
+        "no_site": 1,
+    }
+    assert not sitecustomize_marker.exists()
+    assert not pth_marker.exists()
 
 
 def test_oci_boundary_is_offline_unprivileged_and_non_training() -> None:
@@ -2215,8 +2283,9 @@ def test_oci_boundary_is_offline_unprivileged_and_non_training() -> None:
     assert "WORKDIR /forge" in containerfile
     assert "--no-compile" in containerfile
     assert "--seal-attestation" in containerfile
+    assert "python -I -S /usr/local/libexec/oims-forge-entrypoint.py" in containerfile
     assert (
-        'ENTRYPOINT ["python", "-I", "/usr/local/libexec/oims-forge-entrypoint.py"]'
+        'ENTRYPOINT ["python", "-I", "-S", "/usr/local/libexec/oims-forge-entrypoint.py"]'
         in containerfile
     )
     entrypoint = (ROOT / "forge" / "oims_forge_entrypoint.py").read_text(encoding="utf-8")
@@ -2228,6 +2297,7 @@ def test_oci_boundary_is_offline_unprivileged_and_non_training() -> None:
     assert "OIMS_FORGE_NVIDIA_RUNTIME_SHA256" in entrypoint
     assert "OIMS_FORGE_NVIDIA_SMI_PATH" in entrypoint
     assert "protected executable runtime contains an unexpected mount" in entrypoint
+    assert "sys.flags.no_site" in entrypoint
     assert "nvidia-runtime.approved" in containerfile
     launcher = (ROOT / "scripts" / "run_model_forge.ps1").read_text(encoding="utf-8")
     assert "status --porcelain=v1 --untracked-files=all" in launcher

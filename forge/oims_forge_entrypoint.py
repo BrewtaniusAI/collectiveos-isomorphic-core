@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import ctypes
 import hashlib
-import importlib.util
 import os
 import stat
 import struct
 import sys
+import sysconfig
 from pathlib import Path
 from typing import NamedTuple
 
@@ -69,6 +69,11 @@ STATX_MNT_ID_OFFSET = 144
 PROC_SUPER_MAGIC = 0x9FA0
 SYSFS_MAGIC = 0x62656572
 CGROUP2_SUPER_MAGIC = 0x63677270
+VERIFIED_PACKAGE_BOOTSTRAP = (
+    "import runpy,sys;"
+    "sys.path.append(sys.argv.pop(1));"
+    "runpy.run_module('oims',run_name='__main__',alter_sys=True)"
+)
 
 
 class MountRecord(NamedTuple):
@@ -121,21 +126,26 @@ def package_digest(package_root: Path) -> str | None:
 
 
 def installed_package_root() -> Path | None:
+    if sys.flags.isolated != 1 or sys.flags.no_site != 1:
+        return None
     try:
-        specification = importlib.util.find_spec("oims")
-        locations = tuple(specification.submodule_search_locations or ()) if specification else ()
-        if len(locations) != 1:
+        roots: set[Path] = set()
+        for scheme in ("purelib", "platlib"):
+            candidate = Path(sysconfig.get_path(scheme)) / "oims"
+            if candidate.is_symlink():
+                return None
+            try:
+                roots.add(candidate.resolve(strict=True))
+            except FileNotFoundError:
+                continue
+        if len(roots) != 1:
             return None
-        root = Path(locations[0]).resolve(strict=True)
+        root = roots.pop()
         interpreter_prefix = Path(sys.prefix).resolve(strict=True)
     except (OSError, RuntimeError, TypeError, ValueError):
         return None
     workspace = Path("/workspace")
-    if (
-        sys.flags.isolated != 1
-        or interpreter_prefix not in root.parents
-        or workspace in root.parents
-    ):
+    if not root.is_dir() or interpreter_prefix not in root.parents or workspace in root.parents:
         return None
     return root
 
@@ -749,7 +759,22 @@ def main(arguments: list[str] | None = None) -> int:
     if nvidia_attestation is not None and nvidia_smi_path is not None:
         os.environ[NVIDIA_RUNTIME_ATTESTATION_ENV] = nvidia_attestation[1]
         os.environ[NVIDIA_SMI_PATH_ENV] = str(nvidia_smi_path)
-    os.execv(sys.executable, [sys.executable, "-I", "-m", "oims", *argv])
+    root = installed_package_root()
+    if root is None:
+        print("Forge installed package is not isolated from runtime shadowing", file=sys.stderr)
+        return 70
+    os.execv(
+        sys.executable,
+        [
+            sys.executable,
+            "-I",
+            "-S",
+            "-c",
+            VERIFIED_PACKAGE_BOOTSTRAP,
+            str(root.parent),
+            *argv,
+        ],
+    )
     return 70
 
 

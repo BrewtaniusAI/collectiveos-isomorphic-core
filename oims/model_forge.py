@@ -473,6 +473,7 @@ def _imported_source_is_isolated() -> bool:
     workspace = Path("/workspace")
     return (
         sys.flags.isolated == 1
+        and sys.flags.no_site == 1
         and interpreter_prefix in source.parents
         and workspace not in source.parents
     )

@@ -27,7 +27,7 @@ RUN python -m pip install --no-cache-dir --no-compile --no-deps . \
         /usr/local/libexec/oims-forge-entrypoint.py \
     && install -D -m 0444 forge/nvidia-runtime.approved \
         /usr/local/share/oims-forge/nvidia-runtime.approved \
-    && python -I /usr/local/libexec/oims-forge-entrypoint.py --seal-attestation \
+    && python -I -S /usr/local/libexec/oims-forge-entrypoint.py --seal-attestation \
     && chmod 0444 /usr/local/share/oims-forge/source.attestation \
     && cd / \
     && rm -rf /opt/oims-forge-build
@@ -37,5 +37,5 @@ RUN mkdir -p /forge/output /forge/inputs/base /forge/inputs/dataset \
 
 WORKDIR /forge
 USER 65532:65532
-ENTRYPOINT ["python", "-I", "/usr/local/libexec/oims-forge-entrypoint.py"]
+ENTRYPOINT ["python", "-I", "-S", "/usr/local/libexec/oims-forge-entrypoint.py"]
 CMD ["forge", "validate", "--plan", "/forge/plan.json"]
