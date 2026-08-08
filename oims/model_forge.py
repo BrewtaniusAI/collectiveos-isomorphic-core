@@ -443,8 +443,10 @@ def _verified_execution_source(
     environment: dict[str, str] | None = None,
 ) -> tuple[str, str] | None:
     env = environment if environment is not None else dict(os.environ)
-    if env.get("OIMS_FORGE_CONTAINER") == "1" and not forge_container_environment_errors(env):
-        return env["OIMS_FORGE_SOURCE_COMMIT"], env["OIMS_FORGE_SOURCE_TREE"]
+    if env.get("OIMS_FORGE_CONTAINER") == "1":
+        if not forge_container_environment_errors(env):
+            return env["OIMS_FORGE_SOURCE_COMMIT"], env["OIMS_FORGE_SOURCE_TREE"]
+        return None
     try:
         completed = subprocess.run(
             [
@@ -495,6 +497,45 @@ def _verified_execution_source(
 
 
 def _strict_json_loads(text: str) -> object:
+    def normalize_string(value: str) -> str:
+        normalized: list[str] = []
+        position = 0
+        while position < len(value):
+            codepoint = ord(value[position])
+            if 0xD800 <= codepoint <= 0xDBFF:
+                if position + 1 >= len(value):
+                    raise ValueError("JSON string contains an unpaired Unicode surrogate")
+                low = ord(value[position + 1])
+                if not 0xDC00 <= low <= 0xDFFF:
+                    raise ValueError("JSON string contains an unpaired Unicode surrogate")
+                normalized.append(chr(0x10000 + ((codepoint - 0xD800) << 10) + low - 0xDC00))
+                position += 2
+                continue
+            if 0xDC00 <= codepoint <= 0xDFFF:
+                raise ValueError("JSON string contains an unpaired Unicode surrogate")
+            normalized.append(value[position])
+            position += 1
+        return "".join(normalized)
+
+    def normalize_value(value: object, depth: int = 0) -> object:
+        if isinstance(value, str):
+            return normalize_string(value)
+        if isinstance(value, list):
+            if depth >= MAX_JSON_NESTING:
+                raise ValueError("JSON nesting exceeds the supported limit")
+            return [normalize_value(item, depth + 1) for item in value]
+        if isinstance(value, dict):
+            if depth >= MAX_JSON_NESTING:
+                raise ValueError("JSON nesting exceeds the supported limit")
+            normalized: dict[str, object] = {}
+            for key, item in value.items():
+                normalized_key = normalize_string(key)
+                if normalized_key in normalized:
+                    raise ValueError(f"duplicate JSON field: {normalized_key}")
+                normalized[normalized_key] = normalize_value(item, depth + 1)
+            return normalized
+        return value
+
     def pairs_hook(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
         result: dict[str, Any] = {}
         for key, value in pairs:
@@ -521,23 +562,7 @@ def _strict_json_loads(text: str) -> object:
         )
     except RecursionError as exc:
         raise ValueError("JSON nesting exceeds the supported limit") from exc
-
-    pending = [(parsed, 0)]
-    while pending:
-        value, depth = pending.pop()
-        if isinstance(value, str):
-            if any("\ud800" <= character <= "\udfff" for character in value):
-                raise ValueError("JSON string contains a lone Unicode surrogate")
-        elif isinstance(value, dict):
-            if depth >= MAX_JSON_NESTING:
-                raise ValueError("JSON nesting exceeds the supported limit")
-            pending.extend((item, depth + 1) for item in value)
-            pending.extend((item, depth + 1) for item in value.values())
-        elif isinstance(value, list):
-            if depth >= MAX_JSON_NESTING:
-                raise ValueError("JSON nesting exceeds the supported limit")
-            pending.extend((item, depth + 1) for item in value)
-    return parsed
+    return normalize_value(parsed)
 
 
 def _parse_timestamp(value: object) -> datetime | None:
@@ -1614,6 +1639,7 @@ def inspect_physical_preflight(
     env = environment if isinstance(environment, dict) else dict(os.environ)
     errors.extend(forge_container_environment_errors(env, require_probe_unlock=True))
     base_image_pinned = _is_immutable_image_ref(env.get("OIMS_FORGE_BASE_IMAGE"))
+    provenance = _verified_execution_source(env) if env.get("OIMS_FORGE_CONTAINER") == "1" else None
 
     status = _proc_status()
     effective_user_non_root = hasattr(os, "geteuid") and os.geteuid() != 0
@@ -1650,10 +1676,26 @@ def inspect_physical_preflight(
     available_host_memory = memory.get("MemAvailable")
     resources = root.get("resources")
     host_limit = resources.get("max_peak_host_bytes") if isinstance(resources, dict) else None
-    if not _is_int(host_memory, minimum=1) or (
-        _is_int(host_limit, minimum=1) and host_memory < host_limit
-    ):
+    declared_host_memory: int | None = None
+    memory_domains = resources.get("memory_domains") if isinstance(resources, dict) else None
+    if isinstance(memory_domains, list):
+        declared_host_memory = next(
+            (
+                domain["capacity_bytes"]
+                for domain in memory_domains
+                if isinstance(domain, dict)
+                and domain.get("kind") == "host-ram"
+                and _is_int(domain.get("capacity_bytes"), minimum=1)
+            ),
+            None,
+        )
+    if not _is_int(host_memory, minimum=1):
         errors.append("physical host memory is below the plan's host-memory ceiling")
+    else:
+        if _is_int(declared_host_memory, minimum=1) and host_memory < declared_host_memory:
+            errors.append("physical host memory is below the declared memory domain")
+        if _is_int(host_limit, minimum=1) and host_memory < host_limit:
+            errors.append("physical host memory is below the plan's host-memory ceiling")
     if not _is_int(available_host_memory, minimum=1) or (
         _is_int(host_limit, minimum=1) and available_host_memory < host_limit
     ):
@@ -1777,15 +1819,7 @@ def inspect_physical_preflight(
         "gpu": gpu,
         "errors": errors,
         "governance_route": GOVERNANCE_ROUTE,
-        "source_commit": (
-            env.get("OIMS_FORGE_SOURCE_COMMIT")
-            if _is_revision(env.get("OIMS_FORGE_SOURCE_COMMIT"))
-            else None
-        ),
-        "source_tree": (
-            env.get("OIMS_FORGE_SOURCE_TREE")
-            if _is_revision(env.get("OIMS_FORGE_SOURCE_TREE"))
-            else None
-        ),
+        "source_commit": provenance[0] if provenance is not None else None,
+        "source_tree": provenance[1] if provenance is not None else None,
     }
     return seal_record(receipt)

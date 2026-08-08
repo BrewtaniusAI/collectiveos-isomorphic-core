@@ -99,6 +99,12 @@ def test_deeply_nested_plan_cli_fails_closed(
     assert "JSON nesting exceeds the supported limit" in payload["errors"][0]
 
 
+def test_valid_escaped_surrogate_pair_is_normalized(tmp_path: Path) -> None:
+    plan_path = tmp_path / "escaped-pair.json"
+    plan_path.write_text('{"emoji":"\\ud83d\\ude00"}', encoding="utf-8")
+    assert load_forge_plan(plan_path) == {"emoji": "😀"}
+
+
 @pytest.mark.parametrize(
     ("path", "value", "expected"),
     [
@@ -319,7 +325,7 @@ def test_lone_surrogate_receipt_cli_fails_closed(
     payload = json.loads(capsys.readouterr().out)
     assert exit_code == 2
     assert payload["valid"] is False
-    assert any("lone Unicode surrogate" in error for error in payload["errors"])
+    assert any("unpaired Unicode surrogate" in error for error in payload["errors"])
 
 
 @pytest.mark.parametrize("field", ["source_commit", "source_tree"])
@@ -391,6 +397,28 @@ def test_probe_requires_exact_dual_unlock_before_device_inspection() -> None:
     assert result["qmf_admissible"] is False
     assert any("accepted plan hash" in error for error in result["errors"])
     run.assert_not_called()
+
+
+def test_refused_probe_omits_unverified_source_provenance() -> None:
+    environment = {
+        "OIMS_FORGE_ENABLE_PROBE": "1",
+        "OIMS_FORGE_CONTAINER": "1",
+        "HF_HUB_OFFLINE": "1",
+        "TRANSFORMERS_OFFLINE": "1",
+        "HF_DATASETS_OFFLINE": "1",
+        "OIMS_FORGE_BASE_IMAGE": "python:3.12-slim@sha256:" + "a" * 64,
+        "OIMS_FORGE_SOURCE_COMMIT": "a" * 40,
+        "OIMS_FORGE_SOURCE_TREE": "b" * 40,
+    }
+    with patch("oims.model_forge._verified_execution_source", return_value=None):
+        result = inspect_physical_preflight(
+            probe_plan(),
+            accepted_plan_hash=probe_plan()["plan_hash"],
+            environment=environment,
+        )
+    assert result["status"] == "REFUSED"
+    assert result["source_commit"] is None
+    assert result["source_tree"] is None
 
 
 def test_probe_can_prove_a_locked_4090_sandbox_without_training() -> None:
@@ -640,7 +668,7 @@ def test_direct_simulation_refuses_index_hidden_source_changes(tmp_path: Path) -
 
 
 @pytest.mark.parametrize(
-    ("memory_info", "cgroup_limits", "expected_error"),
+    ("memory_info", "cgroup_limits", "host_domain_bytes", "expected_error"),
     [
         (
             {
@@ -655,6 +683,7 @@ def test_direct_simulation_refuses_index_hidden_source_changes(tmp_path: Path) -
                 "swap_limit_bytes": 0,
                 "pids_limit": 512,
             },
+            128 * 1024**3,
             "available host memory is below the plan's host-memory ceiling",
         ),
         (
@@ -670,16 +699,41 @@ def test_direct_simulation_refuses_index_hidden_source_changes(tmp_path: Path) -
                 "swap_limit_bytes": 0,
                 "pids_limit": 512,
             },
+            128 * 1024**3,
             "available container memory is below the plan's host-memory ceiling",
+        ),
+        (
+            {
+                "MemTotal": 128 * 1024**3,
+                "MemAvailable": 121 * 1024**3,
+                "SwapTotal": 0,
+                "SwapFree": 0,
+            },
+            {
+                "memory_limit_bytes": 124 * 1024**3,
+                "memory_current_bytes": 1 * 1024**3,
+                "swap_limit_bytes": 0,
+                "pids_limit": 512,
+            },
+            129 * 1024**3,
+            "physical host memory is below the declared memory domain",
         ),
     ],
 )
 def test_probe_requires_current_memory_headroom(
     memory_info: dict[str, int],
     cgroup_limits: dict[str, int],
+    host_domain_bytes: int,
     expected_error: str,
 ) -> None:
     plan = probe_plan()
+    resources = plan["resources"]
+    assert isinstance(resources, dict)
+    domains = resources["memory_domains"]
+    assert isinstance(domains, list)
+    host_domain = next(domain for domain in domains if domain["kind"] == "host-ram")
+    host_domain["capacity_bytes"] = host_domain_bytes
+    rehash(plan)
     environment = {
         "OIMS_FORGE_ENABLE_PROBE": "1",
         "OIMS_FORGE_CONTAINER": "1",
