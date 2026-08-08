@@ -121,6 +121,12 @@ function Invoke-ForgeImageBuild {
         }
         catch {
             $CopyFailure = $_
+            try {
+                $GitProcess.Kill($true)
+            }
+            catch [System.InvalidOperationException] {
+                # Git exited between the stream failure and termination request.
+            }
         }
         finally {
             $DockerProcess.StandardInput.Close()

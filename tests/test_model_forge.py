@@ -2409,6 +2409,15 @@ def test_launcher_streams_exact_commit_into_direct_image_build() -> None:
     assert launcher.index("Invoke-ForgeImageBuild `") < launcher.index("switch ($Mode)")
 
 
+def test_launcher_terminates_archive_producer_after_broken_pipe() -> None:
+    launcher = (ROOT / "scripts" / "run_model_forge.ps1").read_text(encoding="utf-8")
+    failure = launcher.index("$CopyFailure = $_")
+    terminate = launcher.index("$GitProcess.Kill($true)", failure)
+    wait = launcher.index("$GitProcess.WaitForExit()", failure)
+
+    assert failure < terminate < wait
+
+
 def test_forge_receipt_schemas_refuse_undeclared_fields_and_match_runtime(tmp_path: Path) -> None:
     run_schema = json.loads(
         (ROOT / "schemas" / "model-forge-run-receipt.schema.json").read_text(encoding="utf-8")
