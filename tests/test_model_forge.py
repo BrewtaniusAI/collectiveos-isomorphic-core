@@ -1060,11 +1060,30 @@ def test_preimport_entrypoint_rejects_installed_package_tampering(tmp_path: Path
         f"commit={'a' * 40}\ntree={'b' * 40}\npackage_sha256={observed}\n",
         encoding="ascii",
     )
-    assert verify_installed_package(attestation, package_root) == ()
+    assert verify_installed_package(attestation, package_root, (Path("/"),)) == ()
     (package_root / "model_forge.py").write_text("LAWFUL = False\n", encoding="utf-8")
-    assert verify_installed_package(attestation, package_root) == (
+    assert verify_installed_package(attestation, package_root, (Path("/"),)) == (
         "Forge installed package does not match its build attestation",
     )
+
+
+def test_preimport_entrypoint_rejects_matching_replacement_mounts(tmp_path: Path) -> None:
+    package_root = tmp_path / "oims"
+    package_root.mkdir()
+    package_file = package_root / "model_forge.py"
+    package_file.write_text("LAWFUL = False\n", encoding="utf-8")
+    observed = entrypoint_package_digest(package_root)
+    assert observed is not None
+    attestation = tmp_path / "source.attestation"
+    attestation.write_text(
+        f"commit={'a' * 40}\ntree={'b' * 40}\npackage_sha256={observed}\n",
+        encoding="ascii",
+    )
+    assert verify_installed_package(
+        attestation,
+        package_root,
+        (Path("/"), package_file, attestation),
+    ) == ("Forge protected source paths contain an unexpected runtime mount",)
 
 
 def test_oci_boundary_is_offline_unprivileged_and_non_training() -> None:
@@ -1109,6 +1128,9 @@ def test_oci_boundary_is_offline_unprivileged_and_non_training() -> None:
         'ENTRYPOINT ["python", "-I", "/usr/local/libexec/oims-forge-entrypoint.py"]'
         in containerfile
     )
+    entrypoint = (ROOT / "forge" / "oims_forge_entrypoint.py").read_text(encoding="utf-8")
+    assert "/proc/self/mountinfo" in entrypoint
+    assert "protected source paths contain an unexpected runtime mount" in entrypoint
     launcher = (ROOT / "scripts" / "run_model_forge.ps1").read_text(encoding="utf-8")
     assert "status --porcelain=v1 --untracked-files=all" in launcher
     assert "ls-files -v" in launcher

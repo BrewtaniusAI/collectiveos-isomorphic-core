@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 ATTESTATION_PATH = Path("/usr/local/share/oims-forge/source.attestation")
+MOUNTINFO_PATH = Path("/proc/self/mountinfo")
 
 
 def _is_revision(value: object) -> bool:
@@ -87,9 +88,60 @@ def _read_values(path: Path) -> dict[str, str] | None:
     return values
 
 
+def _mount_points(path: Path = MOUNTINFO_PATH) -> tuple[Path, ...] | None:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return None
+    mount_points: list[Path] = []
+    for line in lines:
+        fields = line.partition(" - ")[0].split()
+        if len(fields) < 5:
+            return None
+        value = (
+            fields[4]
+            .replace("\\040", " ")
+            .replace("\\011", "\t")
+            .replace("\\012", "\n")
+            .replace("\\134", "\\")
+        )
+        mount_points.append(Path(value))
+    return tuple(mount_points)
+
+
+def protected_mount_errors(
+    package_root: Path,
+    attestation_path: Path = ATTESTATION_PATH,
+    verifier_path: Path | None = None,
+    observed_mounts: tuple[Path, ...] | None = None,
+) -> tuple[str, ...]:
+    try:
+        protected = (
+            package_root.resolve(strict=True),
+            attestation_path.resolve(strict=True),
+            (verifier_path or Path(__file__)).resolve(strict=True),
+        )
+    except (OSError, RuntimeError):
+        return ("Forge protected source paths cannot be resolved",)
+    mounts = observed_mounts if observed_mounts is not None else _mount_points()
+    if mounts is None:
+        return ("Forge runtime mount topology cannot be verified",)
+    filesystem_root = Path("/")
+    for mount in mounts:
+        if mount == filesystem_root:
+            continue
+        if any(
+            mount == target or mount in target.parents or target in mount.parents
+            for target in protected
+        ):
+            return ("Forge protected source paths contain an unexpected runtime mount",)
+    return ()
+
+
 def verify_installed_package(
     attestation_path: Path = ATTESTATION_PATH,
     package_root: Path | None = None,
+    observed_mounts: tuple[Path, ...] | None = None,
 ) -> tuple[str, ...]:
     values = _read_values(attestation_path)
     if values is None or set(values) != {"commit", "tree", "package_sha256"}:
@@ -101,6 +153,13 @@ def verify_installed_package(
     root = package_root if package_root is not None else installed_package_root()
     if root is None:
         return ("Forge installed package is not isolated from runtime shadowing",)
+    mount_errors = protected_mount_errors(
+        root,
+        attestation_path,
+        observed_mounts=observed_mounts,
+    )
+    if mount_errors:
+        return mount_errors
     observed = package_digest(root)
     if observed != values["package_sha256"]:
         return ("Forge installed package does not match its build attestation",)
@@ -122,6 +181,11 @@ def seal_attestation(attestation_path: Path = ATTESTATION_PATH) -> int:
     observed = package_digest(root) if root is not None else None
     if observed is None:
         print("Forge installed package cannot be attested", file=sys.stderr)
+        return 70
+    mount_errors = protected_mount_errors(root, attestation_path)
+    if mount_errors:
+        for error in mount_errors:
+            print(error, file=sys.stderr)
         return 70
     try:
         with attestation_path.open("a", encoding="ascii", newline="\n") as handle:
