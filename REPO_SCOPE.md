@@ -17,6 +17,7 @@ agent family and its CollectiveOS role-binding bridge.
 - target-machine diagnostics, download scripts, and a one-command acceptance path;
 - strict QMF-bound Forge plans, deterministic training simulation, and receipt replay;
 - offline OCI isolation and a non-training RTX 4090 sandbox preflight;
+- typed, hash-linked Forge constraint signals with explicit non-appended Proof Vault metadata;
 - claims, limitations, reproducibility, review, and release-state documentation.
 
 ## Included but not yet physically accepted

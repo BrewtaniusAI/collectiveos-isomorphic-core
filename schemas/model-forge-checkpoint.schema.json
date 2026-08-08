@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://oims.collective-osp.org/schemas/model-forge-checkpoint-1.0.0.json",
+  "$id": "https://oims.collective-osp.org/schemas/model-forge-checkpoint-1.1.0.json",
   "title": "OIMS Model Forge Synthetic Checkpoint",
   "type": "object",
   "additionalProperties": false,
@@ -18,7 +18,7 @@
     "checkpoint_hash"
   ],
   "properties": {
-    "schema_version": {"const": "1.0.0"},
+    "schema_version": {"const": "1.1.0"},
     "run_id": {"type": "string", "pattern": "^sim-[0-9a-f]{16}$"},
     "evidence_class": {"const": "SIMULATED"},
     "synthetic": {"const": true},

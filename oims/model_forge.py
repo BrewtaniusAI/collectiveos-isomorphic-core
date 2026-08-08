@@ -38,7 +38,7 @@ from typing import Any
 from .manifest import ROOT
 from .proof import atomic_write_json, seal_record, verify_sealed_record
 
-FORGE_SCHEMA_VERSION = "1.0.0"
+FORGE_SCHEMA_VERSION = "1.1.0"
 QMF_DERIVATION_VERSION = "10.0.0"
 MAX_PLAN_BYTES = 1024 * 1024
 MAX_RECORD_BYTES = 1024 * 1024
@@ -57,6 +57,7 @@ RFC3339_TIMESTAMP = re.compile(
     r"^[0-9]{4}-[0-9]{2}-[0-9]{2}[Tt][0-9]{2}:[0-9]{2}:[0-9]{2}"
     r"(?:\.[0-9]+)?(?:[Zz]|[+-][0-9]{2}:[0-9]{2})$"
 )
+CONSTRAINT_SIGNAL_ID = re.compile(r"^[a-z][a-z0-9_.-]{2,63}$")
 GPT_OSS_20B_REPOSITORY = "openai/gpt-oss-20b"
 GPT_OSS_20B_REVISION = "6cee5e81ee83917806bbde320786a8fb61efebee"
 QMF_DIGEST_LENGTH = 71
@@ -86,6 +87,47 @@ SECCOMP_PROBE_SYSCALLS = {
 SECCOMP_UNKNOWN_SYSCALL = 0x7FFFFFFF
 AT_FDCWD = -100
 RENAME_NOREPLACE = 1
+CONSTRAINT_TYPES = {
+    "authority",
+    "energy",
+    "evidence",
+    "identity",
+    "isolation",
+    "memory",
+    "network",
+    "provenance",
+    "rollback",
+    "thermal",
+}
+CONSTRAINT_VALIDATION_METHODS = {
+    "bounded-measurement",
+    "canonical-hash",
+    "exact-match",
+    "hash-chain",
+    "kernel-observation",
+    "strict-policy",
+}
+CONSTRAINT_SIGNAL_KEYS = {
+    "signal_id",
+    "constraint_type",
+    "source",
+    "validation_method",
+    "satisfied",
+    "lineage_hash",
+}
+PROOF_VAULT_KEYS = {
+    "record_class",
+    "append_state",
+    "worm_write_performed",
+    "external_anchor",
+    "promotion_eligible",
+    "constraint_signals_hash",
+}
+PROOF_VAULT_RECORD_CLASSES = {
+    "PLAN_DECISION",
+    "SIMULATION_RECEIPT",
+    "PHYSICAL_PREFLIGHT_RECEIPT",
+}
 
 TOP_LEVEL_KEYS = {
     "schema_version",
@@ -225,6 +267,8 @@ RUN_RECEIPT_KEYS = {
     "rollback_artifact_hash",
     "governance_route",
     "limitations",
+    "constraint_signals",
+    "proof_vault",
     "source_commit",
     "source_tree",
     "record_sha256",
@@ -296,6 +340,114 @@ def qmf_canonical_json(value: Any) -> str:
 
 def qmf_digest(value: Any) -> str:
     return "sha256:" + hashlib.sha256(qmf_canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def _constraint_signal(
+    signal_id: str,
+    constraint_type: str,
+    source: str,
+    validation_method: str,
+    satisfied: bool,
+) -> dict[str, Any]:
+    body = {
+        "signal_id": signal_id,
+        "constraint_type": constraint_type,
+        "source": source,
+        "validation_method": validation_method,
+        "satisfied": satisfied,
+    }
+    return {**body, "lineage_hash": qmf_digest(body)}
+
+
+def _canonical_constraint_signals(*signals: dict[str, Any]) -> list[dict[str, Any]]:
+    return sorted((dict(signal) for signal in signals), key=lambda signal: signal["signal_id"])
+
+
+def _proof_vault_metadata(
+    record_class: str,
+    constraint_signals: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "record_class": record_class,
+        "append_state": "NOT_APPENDED",
+        "worm_write_performed": False,
+        "external_anchor": None,
+        "promotion_eligible": False,
+        "constraint_signals_hash": qmf_digest(constraint_signals),
+    }
+
+
+def _constraint_provenance_errors(
+    record: object,
+    *,
+    expected_record_class: str | None = None,
+) -> tuple[str, ...]:
+    errors: list[str] = []
+    if not isinstance(record, dict):
+        return ("constraint provenance record must be an object",)
+    signals = record.get("constraint_signals")
+    signal_ids: list[str] = []
+    if not isinstance(signals, list) or not signals or len(signals) > 64:
+        errors.append("constraint_signals must contain between 1 and 64 signals")
+        signals = []
+    for index, value in enumerate(signals):
+        if not isinstance(value, dict) or set(value) != CONSTRAINT_SIGNAL_KEYS:
+            errors.append(f"constraint_signals[{index}] fields are invalid")
+            continue
+        signal_id = value.get("signal_id")
+        constraint_type = value.get("constraint_type")
+        source = value.get("source")
+        validation_method = value.get("validation_method")
+        satisfied = value.get("satisfied")
+        if not isinstance(signal_id, str) or CONSTRAINT_SIGNAL_ID.fullmatch(signal_id) is None:
+            errors.append(f"constraint_signals[{index}].signal_id is invalid")
+        else:
+            signal_ids.append(signal_id)
+        if not isinstance(constraint_type, str) or constraint_type not in CONSTRAINT_TYPES:
+            errors.append(f"constraint_signals[{index}].constraint_type is invalid")
+        if not isinstance(source, str) or not source or len(source) > 256:
+            errors.append(f"constraint_signals[{index}].source is invalid")
+        if (
+            not isinstance(validation_method, str)
+            or validation_method not in CONSTRAINT_VALIDATION_METHODS
+        ):
+            errors.append(f"constraint_signals[{index}].validation_method is invalid")
+        if type(satisfied) is not bool:
+            errors.append(f"constraint_signals[{index}].satisfied is invalid")
+        body = {key: value.get(key) for key in CONSTRAINT_SIGNAL_KEYS - {"lineage_hash"}}
+        try:
+            expected_lineage_hash = qmf_digest(body)
+        except (TypeError, ValueError):
+            expected_lineage_hash = None
+        if value.get("lineage_hash") != expected_lineage_hash:
+            errors.append(f"constraint_signals[{index}].lineage_hash is invalid")
+    if signal_ids != sorted(signal_ids) or len(signal_ids) != len(set(signal_ids)):
+        errors.append("constraint_signals must be uniquely sorted by signal_id")
+
+    proof_vault = record.get("proof_vault")
+    if not isinstance(proof_vault, dict) or set(proof_vault) != PROOF_VAULT_KEYS:
+        errors.append("proof_vault fields are invalid")
+        return tuple(errors)
+    record_class = proof_vault.get("record_class")
+    if not isinstance(record_class, str) or record_class not in PROOF_VAULT_RECORD_CLASSES:
+        errors.append("proof_vault.record_class is invalid")
+    if expected_record_class is not None and record_class != expected_record_class:
+        errors.append("proof_vault.record_class does not match the receipt type")
+    if proof_vault.get("append_state") != "NOT_APPENDED":
+        errors.append("proof_vault.append_state must remain NOT_APPENDED")
+    if proof_vault.get("worm_write_performed") is not False:
+        errors.append("proof_vault cannot claim an external WORM write")
+    if proof_vault.get("external_anchor") is not None:
+        errors.append("proof_vault cannot claim an external anchor")
+    if proof_vault.get("promotion_eligible") is not False:
+        errors.append("proof_vault cannot make Forge evidence promotion-eligible")
+    try:
+        expected_signal_hash = qmf_digest(signals)
+    except (TypeError, ValueError):
+        expected_signal_hash = None
+    if proof_vault.get("constraint_signals_hash") != expected_signal_hash:
+        errors.append("proof_vault.constraint_signals_hash is invalid")
+    return tuple(errors)
 
 
 def prefixed_file_digest(path: Path) -> str:
@@ -983,6 +1135,22 @@ def forge_plan_decision(plan: object) -> dict[str, Any]:
     plan_hash = plan.get("plan_hash") if isinstance(plan, dict) else None
     mode = plan.get("mode") if isinstance(plan, dict) else None
     evidence_class = plan.get("evidence_class") if isinstance(plan, dict) else None
+    constraint_signals = _canonical_constraint_signals(
+        _constraint_signal(
+            "authority.proposal-only",
+            "authority",
+            "model-forge-policy",
+            "strict-policy",
+            True,
+        ),
+        _constraint_signal(
+            "plan.validation",
+            "provenance",
+            "model-forge-plan",
+            "canonical-hash",
+            not errors,
+        ),
+    )
     record = {
         "@context": "https://oims.collective-osp.org/model-forge/v1",
         "@type": "OIMSModelForgePlanDecision",
@@ -996,6 +1164,8 @@ def forge_plan_decision(plan: object) -> dict[str, Any]:
         "qmf_admissible": False,
         "governance_route": GOVERNANCE_ROUTE,
         "errors": list(errors),
+        "constraint_signals": constraint_signals,
+        "proof_vault": _proof_vault_metadata("PLAN_DECISION", constraint_signals),
         "source_commit": provenance[0] if provenance is not None else None,
     }
     return seal_record(record)
@@ -1035,6 +1205,92 @@ def _rename_directory_noreplace(source: Path, destination: Path) -> None:
     if result != 0:
         observed_errno = ctypes.get_errno() or errno.EIO
         raise OSError(observed_errno, os.strerror(observed_errno), destination)
+
+
+def _simulation_constraint_signals(
+    plan: dict[str, Any],
+    source_commit: str,
+    source_tree: str,
+) -> list[dict[str, Any]]:
+    return _canonical_constraint_signals(
+        _constraint_signal(
+            "authority.none",
+            "authority",
+            "simulation-receipt",
+            "strict-policy",
+            True,
+        ),
+        _constraint_signal(
+            "energy.budget",
+            "energy",
+            "deterministic-simulation-telemetry",
+            "bounded-measurement",
+            True,
+        ),
+        _constraint_signal(
+            "evidence.checkpoint-chain",
+            "evidence",
+            "synthetic-checkpoints",
+            "hash-chain",
+            True,
+        ),
+        _constraint_signal(
+            "memory.device-ceiling",
+            "memory",
+            "declared-gpu-vram-domain",
+            "bounded-measurement",
+            True,
+        ),
+        _constraint_signal(
+            "memory.host-ceiling",
+            "memory",
+            "declared-host-ram-domain",
+            "bounded-measurement",
+            True,
+        ),
+        _constraint_signal(
+            "network.offline",
+            "network",
+            "live-container-observation",
+            "kernel-observation",
+            True,
+        ),
+        _constraint_signal(
+            "plan.validation",
+            "provenance",
+            f"plan:{plan['plan_hash']}",
+            "canonical-hash",
+            True,
+        ),
+        _constraint_signal(
+            "rollback.immutable-base",
+            "rollback",
+            "qmf-contract",
+            "exact-match",
+            True,
+        ),
+        _constraint_signal(
+            "sandbox.isolation",
+            "isolation",
+            "live-container-observation",
+            "kernel-observation",
+            True,
+        ),
+        _constraint_signal(
+            "source.attestation",
+            "identity",
+            f"git:{source_commit}:{source_tree}",
+            "canonical-hash",
+            True,
+        ),
+        _constraint_signal(
+            "thermal.ceiling",
+            "thermal",
+            "deterministic-simulation-telemetry",
+            "bounded-measurement",
+            True,
+        ),
+    )
 
 
 def simulate_forge_run(
@@ -1121,6 +1377,8 @@ def simulate_forge_run(
     candidate = dict(candidate_body)
     candidate["candidate_hash"] = qmf_digest(candidate_body)
     completed = started + timedelta(seconds=simulation["steps"] * step_duration)
+    constraint_signals = _simulation_constraint_signals(plan, source_commit, source_tree)
+
     receipt = {
         "@context": "https://oims.collective-osp.org/model-forge/v1",
         "@type": "OIMSModelForgeRunReceipt",
@@ -1158,6 +1416,8 @@ def simulate_forge_run(
         "rollback_artifact_hash": plan["qmf_contract"]["rollback_artifact_hash"],
         "governance_route": GOVERNANCE_ROUTE,
         "limitations": SIMULATION_LIMITATIONS,
+        "constraint_signals": constraint_signals,
+        "proof_vault": _proof_vault_metadata("SIMULATION_RECEIPT", constraint_signals),
         "source_commit": source_commit,
         "source_tree": source_tree,
     }
@@ -1329,6 +1589,13 @@ def verify_forge_run(receipt_path: Path | str) -> dict[str, Any]:
     for field, expected in expected_receipt.items():
         if receipt.get(field) != expected or type(receipt.get(field)) is not type(expected):
             errors.append(f"Forge receipt field {field} is invalid")
+    errors.extend(
+        f"constraint provenance: {error}"
+        for error in _constraint_provenance_errors(
+            receipt,
+            expected_record_class="SIMULATION_RECEIPT",
+        )
+    )
 
     run_dir = path.parent
     plan_valid = False
@@ -1387,6 +1654,16 @@ def verify_forge_run(receipt_path: Path | str) -> dict[str, Any]:
         verified_source = _verified_execution_source()
         if verified_source != (source_commit, source_tree):
             errors.append("Forge receipt provenance does not match the verified execution source")
+        if plan_valid:
+            expected_signals = _simulation_constraint_signals(plan, source_commit, source_tree)
+            if receipt.get("constraint_signals") != expected_signals:
+                errors.append("Forge constraint signals failed semantic replay")
+            expected_proof_vault = _proof_vault_metadata(
+                "SIMULATION_RECEIPT",
+                expected_signals,
+            )
+            if receipt.get("proof_vault") != expected_proof_vault:
+                errors.append("Forge Proof Vault metadata failed semantic replay")
 
     telemetry_path = run_dir / "telemetry.jsonl"
     telemetry_bytes: bytes | None = None
@@ -1985,7 +2262,8 @@ def inspect_physical_preflight(
 ) -> dict[str, Any]:
     """Inspect a locked sandbox without loading weights or starting training."""
 
-    errors = list(validate_forge_plan(plan))
+    plan_validation_errors = list(validate_forge_plan(plan))
+    errors = list(plan_validation_errors)
     root = plan if isinstance(plan, dict) else {}
     if root.get("mode") != "probe":
         errors.append("only a probe plan can enter physical preflight")
@@ -2162,6 +2440,192 @@ def inspect_physical_preflight(
                         if temperature > root["resources"]["max_temperature_millic"]:
                             errors.append("physical GPU temperature exceeds the plan ceiling")
 
+    sandbox_observation = {
+        "effective_user_non_root": effective_user_non_root,
+        "capabilities_empty": capabilities_empty,
+        "no_new_privileges": status.get("NoNewPrivs") == "1",
+        "seccomp_filter": seccomp_filter,
+        "read_only_root": root_read_only,
+        "default_route_present": default_route_present,
+        "only_loopback_interface": only_loopback,
+        "base_image_pinned": base_image_pinned,
+        **mount_policy,
+        "swap_total_bytes": swap_total,
+        "swap_used_bytes": (
+            swap_total - swap_free
+            if swap_total >= 0 and swap_free >= 0 and swap_total >= swap_free
+            else None
+        ),
+        "host_memory_bytes": host_memory if _is_int(host_memory, minimum=1) else None,
+        "host_memory_available_bytes": (
+            available_host_memory if _is_int(available_host_memory, minimum=1) else None
+        ),
+        "container_memory_limit_bytes": (
+            cgroup_memory_limit if _is_int(cgroup_memory_limit, minimum=1) else None
+        ),
+        "container_memory_current_bytes": (
+            cgroup_memory_current if _is_int(cgroup_memory_current, minimum=0) else None
+        ),
+        "container_memory_available_bytes": (
+            cgroup_memory_available if _is_int(cgroup_memory_available, minimum=0) else None
+        ),
+        "container_swap_limit_bytes": (
+            cgroup_limits["swap_limit_bytes"]
+            if _is_int(cgroup_limits["swap_limit_bytes"], minimum=0)
+            else None
+        ),
+        "container_pids_limit": (
+            cgroup_limits["pids_limit"] if _is_int(cgroup_limits["pids_limit"], minimum=1) else None
+        ),
+    }
+    nvidia_runtime_sha256 = (
+        env.get("OIMS_FORGE_NVIDIA_RUNTIME_SHA256")
+        if provenance is not None and _is_digest(env.get("OIMS_FORGE_NVIDIA_RUNTIME_SHA256"))
+        else None
+    )
+    declared_device_bytes = (
+        next(
+            (
+                domain["capacity_bytes"]
+                for domain in memory_domains
+                if isinstance(domain, dict)
+                and domain.get("kind") == "gpu-vram"
+                and _is_int(domain.get("capacity_bytes"), minimum=1)
+            ),
+            None,
+        )
+        if isinstance(memory_domains, list)
+        else None
+    )
+    device_limit = resources.get("max_peak_device_bytes") if isinstance(resources, dict) else None
+    temperature_limit = (
+        resources.get("max_temperature_millic") if isinstance(resources, dict) else None
+    )
+    host_memory_satisfied = (
+        _is_int(host_memory, minimum=1)
+        and _is_int(available_host_memory, minimum=1)
+        and _is_int(declared_host_memory, minimum=1)
+        and abs(host_memory - declared_host_memory) <= HOST_MEMORY_DOMAIN_TOLERANCE_BYTES
+        and _is_int(host_limit, minimum=1)
+        and host_memory >= host_limit
+        and available_host_memory >= host_limit
+        and _is_int(cgroup_memory_limit, minimum=1)
+        and cgroup_memory_limit >= host_limit
+        and _is_int(cgroup_memory_available, minimum=0)
+        and cgroup_memory_available >= host_limit
+    )
+    device_memory_satisfied = (
+        isinstance(gpu, dict)
+        and _is_int(declared_device_bytes, minimum=1)
+        and abs(gpu["total_bytes"] - declared_device_bytes) <= 512 * 1024**2
+        and _is_int(device_limit, minimum=1)
+        and gpu["total_bytes"] - gpu["used_bytes"] >= device_limit
+    )
+    thermal_satisfied = (
+        isinstance(gpu, dict)
+        and _is_int(temperature_limit, minimum=1)
+        and gpu["temperature_millic"] <= temperature_limit
+    )
+    sandbox_satisfied = (
+        effective_user_non_root
+        and capabilities_empty
+        and sandbox_observation["no_new_privileges"]
+        and seccomp_filter
+        and root_read_only
+        and base_image_pinned
+        and all(mount_policy.values())
+        and cgroup_limits["swap_limit_bytes"] == 0
+        and _is_int(cgroup_limits["pids_limit"], minimum=1)
+        and cgroup_limits["pids_limit"] <= 512
+    )
+    qmf_contract = root.get("qmf_contract")
+    rollback_satisfied = (
+        isinstance(qmf_contract, dict)
+        and _is_digest(qmf_contract.get("base_artifact_hash"))
+        and qmf_contract.get("rollback_artifact_hash") == qmf_contract.get("base_artifact_hash")
+    )
+    constraint_signals = _canonical_constraint_signals(
+        _constraint_signal(
+            "authority.no-training",
+            "authority",
+            "physical-preflight-policy",
+            "strict-policy",
+            True,
+        ),
+        _constraint_signal(
+            "energy.power-telemetry",
+            "energy",
+            "attested-nvidia-device",
+            "bounded-measurement",
+            isinstance(gpu, dict) and gpu["power_limit_milliwatts"] > 0,
+        ),
+        _constraint_signal(
+            "evidence.runtime-attestation",
+            "evidence",
+            "attested-container-and-nvidia-runtime",
+            "canonical-hash",
+            provenance is not None and nvidia_runtime_sha256 is not None,
+        ),
+        _constraint_signal(
+            "memory.device-domain",
+            "memory",
+            "attested-nvidia-device",
+            "bounded-measurement",
+            device_memory_satisfied,
+        ),
+        _constraint_signal(
+            "memory.host-domain",
+            "memory",
+            "kernel-memory-and-cgroup-observation",
+            "bounded-measurement",
+            host_memory_satisfied,
+        ),
+        _constraint_signal(
+            "network.offline",
+            "network",
+            "kernel-network-observation",
+            "kernel-observation",
+            not default_route_present and only_loopback,
+        ),
+        _constraint_signal(
+            "plan.authorization",
+            "authority",
+            "operator-plan-hash-acknowledgement",
+            "exact-match",
+            root.get("mode") == "probe" and accepted_plan_hash == root.get("plan_hash"),
+        ),
+        _constraint_signal(
+            "plan.validation",
+            "provenance",
+            "model-forge-plan",
+            "canonical-hash",
+            not plan_validation_errors,
+        ),
+        _constraint_signal(
+            "rollback.immutable-base",
+            "rollback",
+            "qmf-contract",
+            "exact-match",
+            rollback_satisfied,
+        ),
+        _constraint_signal(
+            "sandbox.isolation",
+            "isolation",
+            "live-container-observation",
+            "kernel-observation",
+            sandbox_satisfied,
+        ),
+        _constraint_signal(
+            "thermal.device-ceiling",
+            "thermal",
+            "attested-nvidia-device",
+            "bounded-measurement",
+            thermal_satisfied,
+        ),
+    )
+    if not errors and not all(signal["satisfied"] for signal in constraint_signals):
+        errors.append("physical preflight constraint provenance is incomplete")
+
     receipt = {
         "@context": "https://oims.collective-osp.org/model-forge/v1",
         "@type": "OIMSModelForgePreflightReceipt",
@@ -2181,54 +2645,16 @@ def inspect_physical_preflight(
         "qmf_admissible": False,
         "deployable_artifact": False,
         "network_mode": "none",
-        "sandbox_observation": {
-            "effective_user_non_root": effective_user_non_root,
-            "capabilities_empty": capabilities_empty,
-            "no_new_privileges": status.get("NoNewPrivs") == "1",
-            "seccomp_filter": seccomp_filter,
-            "read_only_root": root_read_only,
-            "default_route_present": default_route_present,
-            "only_loopback_interface": only_loopback,
-            "base_image_pinned": base_image_pinned,
-            **mount_policy,
-            "swap_total_bytes": swap_total,
-            "swap_used_bytes": (
-                swap_total - swap_free
-                if swap_total >= 0 and swap_free >= 0 and swap_total >= swap_free
-                else None
-            ),
-            "host_memory_bytes": host_memory if _is_int(host_memory, minimum=1) else None,
-            "host_memory_available_bytes": (
-                available_host_memory if _is_int(available_host_memory, minimum=1) else None
-            ),
-            "container_memory_limit_bytes": (
-                cgroup_memory_limit if _is_int(cgroup_memory_limit, minimum=1) else None
-            ),
-            "container_memory_current_bytes": (
-                cgroup_memory_current if _is_int(cgroup_memory_current, minimum=0) else None
-            ),
-            "container_memory_available_bytes": (
-                cgroup_memory_available if _is_int(cgroup_memory_available, minimum=0) else None
-            ),
-            "container_swap_limit_bytes": (
-                cgroup_limits["swap_limit_bytes"]
-                if _is_int(cgroup_limits["swap_limit_bytes"], minimum=0)
-                else None
-            ),
-            "container_pids_limit": (
-                cgroup_limits["pids_limit"]
-                if _is_int(cgroup_limits["pids_limit"], minimum=1)
-                else None
-            ),
-        },
+        "sandbox_observation": sandbox_observation,
         "gpu": gpu,
-        "nvidia_runtime_sha256": (
-            env.get("OIMS_FORGE_NVIDIA_RUNTIME_SHA256")
-            if provenance is not None and _is_digest(env.get("OIMS_FORGE_NVIDIA_RUNTIME_SHA256"))
-            else None
-        ),
+        "nvidia_runtime_sha256": nvidia_runtime_sha256,
         "errors": errors,
         "governance_route": GOVERNANCE_ROUTE,
+        "constraint_signals": constraint_signals,
+        "proof_vault": _proof_vault_metadata(
+            "PHYSICAL_PREFLIGHT_RECEIPT",
+            constraint_signals,
+        ),
         "source_commit": provenance[0] if provenance is not None else None,
         "source_tree": provenance[1] if provenance is not None else None,
     }

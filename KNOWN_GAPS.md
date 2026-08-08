@@ -15,3 +15,6 @@ authority, independent evaluation, or an owner decision:
 
 These gaps prohibit stronger release claims but do not invalidate the implemented local runtime,
 role-binding, or conformance surfaces.
+
+Forge receipts now expose hash-bound Proof Vault metadata, but that metadata deliberately states
+that no WORM append or external anchor occurred. It does not satisfy the external-authority gap.

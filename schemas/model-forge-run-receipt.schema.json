@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://oims.collective-osp.org/schemas/model-forge-run-receipt-1.0.0.json",
+  "$id": "https://oims.collective-osp.org/schemas/model-forge-run-receipt-1.1.0.json",
   "title": "OIMS Model Forge Simulation Receipt",
   "type": "object",
   "required": [
@@ -40,6 +40,8 @@
     "rollback_artifact_hash",
     "governance_route",
     "limitations",
+    "constraint_signals",
+    "proof_vault",
     "source_commit",
     "source_tree",
     "record_sha256"
@@ -47,7 +49,7 @@
   "properties": {
     "@context": {"const": "https://oims.collective-osp.org/model-forge/v1"},
     "@type": {"const": "OIMSModelForgeRunReceipt"},
-    "schema_version": {"const": "1.0.0"},
+    "schema_version": {"const": "1.1.0"},
     "run_id": {"type": "string", "pattern": "^sim-[0-9a-f]{16}$"},
     "plan_id": {"type": "string", "minLength": 1},
     "plan_hash": {"$ref": "#/$defs/digest"},
@@ -86,6 +88,22 @@
         "no optimizer or gradient step executed",
         "resource observations are deterministic fixtures",
         "this receipt cannot satisfy a QMF model-training-run contract"
+      ]
+    },
+    "constraint_signals": {
+      "allOf": [
+        {
+          "$ref": "https://oims.collective-osp.org/schemas/model-forge-constraint-signals-1.0.0.json"
+        },
+        {"items": {"properties": {"satisfied": {"const": true}}}}
+      ]
+    },
+    "proof_vault": {
+      "allOf": [
+        {
+          "$ref": "https://oims.collective-osp.org/schemas/model-forge-proof-vault-metadata-1.0.0.json"
+        },
+        {"properties": {"record_class": {"const": "SIMULATION_RECEIPT"}}}
       ]
     },
     "source_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://oims.collective-osp.org/schemas/model-forge-preflight-receipt-1.0.0.json",
+  "$id": "https://oims.collective-osp.org/schemas/model-forge-preflight-receipt-1.1.0.json",
   "title": "OIMS Model Forge Physical Preflight Receipt",
   "type": "object",
   "required": [
@@ -23,6 +23,8 @@
     "nvidia_runtime_sha256",
     "errors",
     "governance_route",
+    "constraint_signals",
+    "proof_vault",
     "source_commit",
     "source_tree",
     "record_sha256"
@@ -30,7 +32,7 @@
   "properties": {
     "@context": {"const": "https://oims.collective-osp.org/model-forge/v1"},
     "@type": {"const": "OIMSModelForgePreflightReceipt"},
-    "schema_version": {"const": "1.0.0"},
+    "schema_version": {"const": "1.1.0"},
     "plan_id": {
       "oneOf": [
         {"type": "null"},
@@ -183,6 +185,17 @@
     },
     "errors": {"type": "array", "items": {"type": "string"}},
     "governance_route": {"const": ["QC", "GATA", "GATA_PRIME"]},
+    "constraint_signals": {
+      "$ref": "https://oims.collective-osp.org/schemas/model-forge-constraint-signals-1.0.0.json"
+    },
+    "proof_vault": {
+      "allOf": [
+        {
+          "$ref": "https://oims.collective-osp.org/schemas/model-forge-proof-vault-metadata-1.0.0.json"
+        },
+        {"properties": {"record_class": {"const": "PHYSICAL_PREFLIGHT_RECEIPT"}}}
+      ]
+    },
     "source_commit": {
       "oneOf": [
         {"type": "null"},
@@ -212,6 +225,9 @@
           },
           "source_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
           "source_tree": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+          "constraint_signals": {
+            "items": {"properties": {"satisfied": {"const": true}}}
+          },
           "sandbox_observation": {
             "properties": {
               "effective_user_non_root": {"const": true},

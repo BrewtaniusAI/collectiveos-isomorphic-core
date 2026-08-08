@@ -16,7 +16,8 @@ Heterogeneous local-agent family and virtual Model Forge release candidate 0.4.0
 - machine-readable scope ledger;
 - strict QMF v0.10-bound Model Forge plans;
 - deterministic non-model training simulation with replayable checkpoint and telemetry chains;
-- offline, non-root OCI sandbox and non-training RTX 4090 physical preflight.
+- offline, non-root OCI sandbox and non-training RTX 4090 physical preflight;
+- typed Constraint Signal provenance and explicit non-appended Proof Vault metadata.
 
 ## Acceptance pending
 

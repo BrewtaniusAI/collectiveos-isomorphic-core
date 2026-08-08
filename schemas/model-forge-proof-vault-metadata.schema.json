@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://oims.collective-osp.org/schemas/model-forge-proof-vault-metadata-1.0.0.json",
+  "title": "OIMS Model Forge Proof Vault Metadata",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "record_class",
+    "append_state",
+    "worm_write_performed",
+    "external_anchor",
+    "promotion_eligible",
+    "constraint_signals_hash"
+  ],
+  "properties": {
+    "record_class": {
+      "enum": [
+        "PLAN_DECISION",
+        "SIMULATION_RECEIPT",
+        "PHYSICAL_PREFLIGHT_RECEIPT"
+      ]
+    },
+    "append_state": {"const": "NOT_APPENDED"},
+    "worm_write_performed": {"const": false},
+    "external_anchor": {"type": "null"},
+    "promotion_eligible": {"const": false},
+    "constraint_signals_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  }
+}

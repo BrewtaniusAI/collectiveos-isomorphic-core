@@ -33,7 +33,9 @@ Complete:
 - machine schemas and verifier;
 - tests, CI, scope ledger, and operator documentation.
 - strict QMF-bound Forge plans and deterministic virtual training evidence;
-- an offline non-training physical sandbox preflight.
+- an offline non-training physical sandbox preflight;
+- typed, hash-linked Forge Constraint Signal provenance that explicitly denies any external WORM
+  append or promotion claim.
 
 Not falsely marked complete:
 

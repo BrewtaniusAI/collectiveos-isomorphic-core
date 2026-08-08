@@ -27,6 +27,7 @@ from oims.manifest import ROOT
 from oims.model_forge import (
     EXPECTED_TARGET_PARAMETERS,
     ForgePlanError,
+    _constraint_provenance_errors,
     _forge_mount_policy,
     _forge_output_mount_matches,
     _forge_runtime_sandbox_errors,
@@ -42,6 +43,7 @@ from oims.model_forge import (
     load_forge_plan,
     prefixed_file_digest,
     qmf_canonical_json,
+    qmf_digest,
     simulate_forge_run,
     validate_forge_plan,
     verify_forge_run,
@@ -121,6 +123,17 @@ def test_checked_in_simulation_plan_is_exact_and_fail_closed() -> None:
     assert decision["lawful"] is True
     assert decision["qmf_admissible"] is False
     assert decision["evidence_class"] == "SIMULATED"
+    assert (
+        _constraint_provenance_errors(
+            decision,
+            expected_record_class="PLAN_DECISION",
+        )
+        == ()
+    )
+    assert all(signal["satisfied"] for signal in decision["constraint_signals"])
+    assert decision["proof_vault"]["worm_write_performed"] is False
+    assert decision["proof_vault"]["external_anchor"] is None
+    assert decision["proof_vault"]["promotion_eligible"] is False
 
 
 def test_checked_in_probe_plan_is_exact_and_non_training() -> None:
@@ -128,7 +141,7 @@ def test_checked_in_probe_plan_is_exact_and_non_training() -> None:
     assert validate_forge_plan(plan) == ()
     assert (
         plan["plan_hash"]
-        == "sha256:a7d8598120a94de263af8f3d2de54e5be0da4142c10c8aeef4d1467e8266f4b6"
+        == "sha256:566b33b809d2051e5009cf0810f1a941a00b472ae2b55eb7ea8fc98821998754"
     )
     decision = forge_plan_decision(plan)
     assert decision["lawful"] is True
@@ -265,6 +278,22 @@ def test_physical_memory_domains_cannot_be_aggregated_or_aliased() -> None:
 def test_simulation_emits_verifiable_non_model_evidence(tmp_path: Path) -> None:
     receipt = simulate_forge_run(load_example(), artifacts_dir=tmp_path)
     run_dir = tmp_path / receipt["run_id"]
+    assert (
+        _constraint_provenance_errors(
+            receipt,
+            expected_record_class="SIMULATION_RECEIPT",
+        )
+        == ()
+    )
+    assert all(signal["satisfied"] for signal in receipt["constraint_signals"])
+    assert receipt["proof_vault"] == {
+        "record_class": "SIMULATION_RECEIPT",
+        "append_state": "NOT_APPENDED",
+        "worm_write_performed": False,
+        "external_anchor": None,
+        "promotion_eligible": False,
+        "constraint_signals_hash": qmf_digest(receipt["constraint_signals"]),
+    }
     result = verify_forge_run(run_dir / "receipt.json")
     assert result == {
         "valid": True,
@@ -286,6 +315,65 @@ def test_simulation_emits_verifiable_non_model_evidence(tmp_path: Path) -> None:
     assert receipt["output_bytes"] == sum(path.stat().st_size for path in evidence_files)
     assert stat.S_IMODE(run_dir.stat().st_mode) == 0o755
     assert all(stat.S_IMODE(path.stat().st_mode) == 0o644 for path in evidence_files)
+
+
+def test_resealed_constraint_signal_substitution_fails_semantic_replay(tmp_path: Path) -> None:
+    receipt = simulate_forge_run(load_example(), artifacts_dir=tmp_path)
+    receipt_path = tmp_path / receipt["run_id"] / "receipt.json"
+    tampered = json.loads(receipt_path.read_text(encoding="utf-8"))
+    signal = tampered["constraint_signals"][0]
+    signal["satisfied"] = False
+    signal_body = {key: value for key, value in signal.items() if key != "lineage_hash"}
+    signal["lineage_hash"] = qmf_digest(signal_body)
+    tampered["proof_vault"]["constraint_signals_hash"] = qmf_digest(tampered["constraint_signals"])
+    tampered.pop("record_sha256")
+    receipt_path.write_text(
+        json.dumps(seal_record(tampered), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    result = verify_forge_run(receipt_path)
+
+    assert result["valid"] is False
+    assert "Forge constraint signals failed semantic replay" in result["errors"]
+
+
+@pytest.mark.parametrize(
+    ("target", "field"),
+    [
+        ("signal", "constraint_type"),
+        ("signal", "validation_method"),
+        ("proof_vault", "record_class"),
+    ],
+)
+def test_malformed_constraint_provenance_fails_closed_without_raising(
+    tmp_path: Path,
+    target: str,
+    field: str,
+) -> None:
+    receipt = simulate_forge_run(load_example(), artifacts_dir=tmp_path)
+    receipt_path = tmp_path / receipt["run_id"] / "receipt.json"
+    malformed = json.loads(receipt_path.read_text(encoding="utf-8"))
+    if target == "signal":
+        signal = malformed["constraint_signals"][0]
+        signal[field] = []
+        signal_body = {key: value for key, value in signal.items() if key != "lineage_hash"}
+        signal["lineage_hash"] = qmf_digest(signal_body)
+        malformed["proof_vault"]["constraint_signals_hash"] = qmf_digest(
+            malformed["constraint_signals"]
+        )
+    else:
+        malformed["proof_vault"][field] = []
+    malformed.pop("record_sha256")
+    receipt_path.write_text(
+        json.dumps(seal_record(malformed), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    result = verify_forge_run(receipt_path)
+
+    assert result["valid"] is False
+    assert any("constraint provenance" in error for error in result["errors"])
 
 
 @pytest.mark.parametrize(
@@ -1049,6 +1137,16 @@ def test_probe_can_prove_a_locked_4090_sandbox_without_training(
     assert result["lawful"] is (expected_error is None)
     if expected_error is None:
         assert result["gpu"]["name"] == "NVIDIA GeForce RTX 4090"
+        assert (
+            _constraint_provenance_errors(
+                result,
+                expected_record_class="PHYSICAL_PREFLIGHT_RECEIPT",
+            )
+            == ()
+        )
+        assert all(signal["satisfied"] for signal in result["constraint_signals"])
+        assert result["proof_vault"]["worm_write_performed"] is False
+        assert result["proof_vault"]["promotion_eligible"] is False
     else:
         assert result["gpu"] is None
         assert expected_error in result["errors"]
@@ -1717,7 +1815,7 @@ def test_simulation_step_count_has_a_global_evidence_bound() -> None:
 
 def test_plan_loader_refuses_duplicate_fields_and_non_finite_numbers(tmp_path: Path) -> None:
     duplicate = tmp_path / "duplicate.json"
-    duplicate.write_text('{"schema_version":"1.0.0","schema_version":"1.0.0"}', encoding="utf-8")
+    duplicate.write_text('{"schema_version":"1.1.0","schema_version":"1.1.0"}', encoding="utf-8")
     with pytest.raises(ForgePlanError, match="duplicate JSON field"):
         load_forge_plan(duplicate)
 
