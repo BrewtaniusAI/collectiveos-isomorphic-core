@@ -38,6 +38,7 @@ QMF_DERIVATION_VERSION = "10.0.0"
 MAX_PLAN_BYTES = 1024 * 1024
 MAX_RECORD_BYTES = 1024 * 1024
 MAX_TELEMETRY_BYTES = 16 * 1024 * 1024
+MAX_JSON_NESTING = 128
 MAX_SIMULATION_STEPS = 4096
 MAX_FORGE_OUTPUT_BYTES = 64 * 1024 * 1024
 DEFAULT_FORGE_ARTIFACTS_DIR = ROOT / "artifacts" / "model-forge"
@@ -511,12 +512,32 @@ def _strict_json_loads(text: str) -> object:
             raise ValueError(f"non-finite JSON number: {value}")
         return parsed
 
-    return json.loads(
-        text,
-        object_pairs_hook=pairs_hook,
-        parse_constant=reject_constant,
-        parse_float=parse_float,
-    )
+    try:
+        parsed = json.loads(
+            text,
+            object_pairs_hook=pairs_hook,
+            parse_constant=reject_constant,
+            parse_float=parse_float,
+        )
+    except RecursionError as exc:
+        raise ValueError("JSON nesting exceeds the supported limit") from exc
+
+    pending = [(parsed, 0)]
+    while pending:
+        value, depth = pending.pop()
+        if isinstance(value, str):
+            if any("\ud800" <= character <= "\udfff" for character in value):
+                raise ValueError("JSON string contains a lone Unicode surrogate")
+        elif isinstance(value, dict):
+            if depth >= MAX_JSON_NESTING:
+                raise ValueError("JSON nesting exceeds the supported limit")
+            pending.extend((item, depth + 1) for item in value)
+            pending.extend((item, depth + 1) for item in value.values())
+        elif isinstance(value, list):
+            if depth >= MAX_JSON_NESTING:
+                raise ValueError("JSON nesting exceeds the supported limit")
+            pending.extend((item, depth + 1) for item in value)
+    return parsed
 
 
 def _parse_timestamp(value: object) -> datetime | None:

@@ -86,6 +86,19 @@ def test_plan_decision_omits_unverified_source_provenance() -> None:
     assert decision["source_commit"] is None
 
 
+def test_deeply_nested_plan_cli_fails_closed(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    plan_path = tmp_path / "deeply-nested.json"
+    plan_path.write_text("[" * 2_000 + "0" + "]" * 2_000, encoding="utf-8")
+    exit_code = cli_main(["forge", "validate", "--plan", str(plan_path)])
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 64
+    assert payload["status"] == "MALFORMED"
+    assert "JSON nesting exceeds the supported limit" in payload["errors"][0]
+
+
 @pytest.mark.parametrize(
     ("path", "value", "expected"),
     [
@@ -289,6 +302,24 @@ def test_candidate_parent_symlink_loop_fails_closed(tmp_path: Path) -> None:
     result = verify_forge_run(tmp_path / receipt["run_id"] / "receipt.json")
     assert result["valid"] is False
     assert any("cannot resolve Forge candidate path" in error for error in result["errors"])
+
+
+def test_lone_surrogate_receipt_cli_fails_closed(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    receipt = simulate_forge_run(load_example(), artifacts_dir=tmp_path)
+    receipt_path = tmp_path / receipt["run_id"] / "receipt.json"
+    text = receipt_path.read_text(encoding="utf-8")
+    receipt_path.write_text(
+        text.replace("\n}", ',\n  "surrogate": "\\ud800"\n}'),
+        encoding="utf-8",
+    )
+    exit_code = cli_main(["forge", "verify", "--receipt", str(receipt_path)])
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 2
+    assert payload["valid"] is False
+    assert any("lone Unicode surrogate" in error for error in payload["errors"])
 
 
 @pytest.mark.parametrize("field", ["source_commit", "source_tree"])
