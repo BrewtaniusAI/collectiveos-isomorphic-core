@@ -135,7 +135,9 @@ read-only `nvidia-smi`, `nvidia-debugdump`, `nvidia-persistenced`, CUDA MPS util
 NVIDIA/CUDA shared-library file mounts are bounded, byte-hashed by this pre-import verifier, and
 their aggregate digest is carried into the physical-preflight receipt. The verifier also exports
 the single attested absolute `nvidia-smi` mount path, and the probe invokes that path directly so
-an executable earlier on caller-controlled `PATH` cannot substitute the inspected utility.
+an executable earlier on caller-controlled `PATH` cannot substitute the inspected utility. The
+child receives only a fixed C-locale environment, so inherited dynamic-loader overrides cannot
+redirect it to code beneath an admitted input mount.
 An NVIDIA file already mapped before verification, a writable or non-regular file, an entire
 runtime-root mount, or any non-NVIDIA executable-runtime mount still fails closed. Compose refuses
 a working-tree context. This keeps source and runtime evidence bound to the exact inspected bytes.

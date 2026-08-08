@@ -653,6 +653,10 @@ def test_probe_can_prove_a_locked_4090_sandbox_without_training(
         "OIMS_FORGE_NVIDIA_RUNTIME_SHA256": "sha256:" + "d" * 64,
         "OIMS_FORGE_NVIDIA_SMI_PATH": TEST_NVIDIA_SMI_PATH,
         "PATH": "/forge/inputs/base:/usr/bin",
+        "LD_LIBRARY_PATH": "/forge/inputs/base",
+        "LD_PRELOAD": "/forge/inputs/base/libnvidia-ml.so.1",
+        "LD_AUDIT": "/forge/inputs/dataset/libaudit.so",
+        "GLIBC_TUNABLES": "glibc.rtld.dynamic_sort=1",
         "OIMS_FORGE_CONTAINER": "1",
         "HF_HUB_OFFLINE": "1",
         "TRANSFORMERS_OFFLINE": "1",
@@ -734,6 +738,7 @@ def test_probe_can_prove_a_locked_4090_sandbox_without_training(
     run.assert_called_once()
     assert run.call_args.args[0][0] == TEST_NVIDIA_SMI_PATH
     assert run.call_args.args[0][0] != "nvidia-smi"
+    assert run.call_args.kwargs["env"] == {"LC_ALL": "C"}
 
 
 def test_malformed_plan_root_never_raises_from_public_validator() -> None:

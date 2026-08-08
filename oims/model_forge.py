@@ -1871,6 +1871,7 @@ def inspect_physical_preflight(
                 command,
                 check=True,
                 capture_output=True,
+                env={"LC_ALL": "C"},
                 text=True,
                 timeout=15,
             )
