@@ -1,0 +1,50 @@
+name: iere
+version: 0.1.0
+status: draft
+summary: Evidence-grounded retrieval and synthesis engine.
+category: research
+triggers:
+  - current facts
+  - technical documentation
+  - repository inspection
+  - policy research
+  - multi-source synthesis
+inputs:
+  - research_question
+  - sources
+  - freshness_requirement
+  - decision_criteria
+outputs:
+  - cited_synthesis
+  - claim_evidence_map
+  - confidence_assessment
+  - uncertainty_statement
+permissions:
+  read:
+    - supplied_artifacts
+    - approved_external_sources
+    - approved_repositories
+  write: []
+  external_actions: none
+source_priority:
+  - official_or_primary
+  - regulator_standard_or_peer_reviewed
+  - first_party_documentation
+  - strong_secondary
+  - indirect_context
+quality_weights:
+  official_or_primary: 1.0
+  regulator_standard_or_peer_reviewed: 0.9
+  strong_secondary: 0.7
+  indirect_context: 0.4
+invariants:
+  - claim_level_provenance
+  - no_fabricated_citations
+  - conflict_disclosure
+  - freshness_assessment_when_relevant
+  - fact_assumption_inference_separation
+acceptance_checks:
+  - material_claims_are_cited_or_labeled_uncertain
+  - sources_match_claim_scope
+  - conflicting_evidence_is_disclosed
+  - recommendation_tracks_evidence

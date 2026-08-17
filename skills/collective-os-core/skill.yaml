@@ -1,0 +1,47 @@
+name: collective-os-core
+version: 0.1.0
+status: draft
+summary: Constraint-governed task orchestration for CollectiveOS.
+category: governance
+triggers:
+  - complex planning
+  - system design
+  - research synthesis
+  - implementation planning
+  - risk-sensitive decisions
+inputs:
+  - objective
+  - available_evidence
+  - constraints
+  - acceptance_criteria
+outputs:
+  - bounded_plan
+  - traceable_result
+  - validation_record
+  - uncertainty_statement
+permissions:
+  read:
+    - supplied_artifacts
+    - approved_retrieval_sources
+  write: []
+  external_actions: approval_required
+workflow:
+  - define_objective
+  - enumerate_constraints
+  - decompose_task
+  - gather_evidence
+  - execute_bounded_steps
+  - verify_acceptance_criteria
+  - report_with_provenance
+invariants:
+  - preserve_user_intent
+  - separate_fact_assumption_inference_recommendation
+  - disclose_uncertainty
+  - no_unauthorized_state_change
+  - maintain_provenance
+acceptance_checks:
+  - objective_is_observable
+  - constraints_are_explicit
+  - material_claims_have_evidence_or_uncertainty_labels
+  - output_matches_requested_format
+  - state_changes_have_explicit_approval
