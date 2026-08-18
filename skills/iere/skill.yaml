@@ -1,6 +1,7 @@
 name: iere
 version: 0.1.0
 status: draft
+runtime_activation: false
 summary: Evidence-grounded retrieval and synthesis engine.
 category: research
 triggers:

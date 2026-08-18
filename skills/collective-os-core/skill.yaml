@@ -1,6 +1,7 @@
 name: collective-os-core
 version: 0.1.0
 status: draft
+runtime_activation: false
 summary: Constraint-governed task orchestration for CollectiveOS.
 category: governance
 triggers:

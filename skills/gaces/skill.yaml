@@ -1,6 +1,7 @@
 name: gaces
 version: 0.1.0
 status: draft
+runtime_activation: false
 summary: Governed configuration and execution gate for state-changing operations.
 category: operations
 triggers:
