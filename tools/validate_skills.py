@@ -50,7 +50,11 @@ def _load_yaml(path: Path) -> object:
 
 
 def _require_string_list(value: object, field: str, manifest_path: Path) -> None:
-    if not isinstance(value, list) or not value or not all(isinstance(item, str) and item for item in value):
+    if (
+        not isinstance(value, list)
+        or not value
+        or not all(isinstance(item, str) and item for item in value)
+    ):
         raise SkillValidationError(f"{manifest_path}: {field} must be a non-empty list of strings")
 
 
@@ -82,7 +86,11 @@ def _validate_manifest(manifest: object, manifest_path: Path) -> dict[str, objec
         _require_string_list(manifest[field], field, manifest_path)
 
     permissions = manifest["permissions"]
-    if not isinstance(permissions, dict) or set(permissions) != {"read", "write", "external_actions"}:
+    if not isinstance(permissions, dict) or set(permissions) != {
+        "read",
+        "write",
+        "external_actions",
+    }:
         raise SkillValidationError(
             f"{manifest_path}: permissions must declare exactly read/write/external_actions"
         )
@@ -163,9 +171,7 @@ def validate_package(package_dir: Path) -> SkillPackage:
 
 def discover_packages(skills_dir: Path) -> list[Path]:
     return sorted(
-        path
-        for path in skills_dir.iterdir()
-        if path.is_dir() and (path / "skill.yaml").is_file()
+        path for path in skills_dir.iterdir() if path.is_dir() and (path / "skill.yaml").is_file()
     )
 
 
@@ -175,7 +181,9 @@ def validate_registry(skills_dir: Path) -> list[SkillPackage]:
     for package in packages:
         identity = (package.name, package.version)
         if identity in identities:
-            raise SkillValidationError(f"duplicate skill identity: {package.name}@{package.version}")
+            raise SkillValidationError(
+                f"duplicate skill identity: {package.name}@{package.version}"
+            )
         identities.add(identity)
     return packages
 
