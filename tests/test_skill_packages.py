@@ -8,7 +8,6 @@ import yaml
 
 from tools.validate_skills import SkillValidationError, validate_package, validate_registry
 
-
 ROOT = Path(__file__).resolve().parents[1]
 SKILLS = ROOT / "skills"
 STARTER_NAMES = {"collective-os-core", "iere", "gaces"}

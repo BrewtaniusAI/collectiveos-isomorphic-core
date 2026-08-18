@@ -9,7 +9,6 @@ from pathlib import Path
 
 import yaml
 
-
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 ALLOWED_STATUS = {"draft", "experimental", "active", "deprecated"}

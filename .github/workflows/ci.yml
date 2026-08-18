@@ -33,7 +33,6 @@ jobs:
           python -m pip install -e . --no-deps
       - name: Lint
         run: |
-          ruff check --diff . || true
           ruff check .
           ruff format --check .
       - name: Unit and conformance tests
