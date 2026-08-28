@@ -1,0 +1,11 @@
+{
+  "schema": "collective.stack.interface.v1",
+  "repository": "BrewtaniusAI/collectiveos-isomorphic-core",
+  "stack_role": "constraint_model_core",
+  "emits": [{"artifact_type": "model_evidence", "schema_version": "1.0", "non_authorizing": true}],
+  "declared_downstream_consumer": "Quantum-Model-Family",
+  "canonical_registry": "BrewtaniusAI/collective-stack-contract-registry",
+  "transition_default": "DENY_UNDECLARED_TRANSITION",
+  "execution_authority": "NONE",
+  "notes": "Declarative documentation only. No runtime import, workflow activation, deployment action, or release authority is granted."
+}
