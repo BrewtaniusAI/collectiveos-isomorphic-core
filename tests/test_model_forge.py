@@ -2219,6 +2219,18 @@ def test_nvidia_runtime_mount_attestation_hashes_read_only_regular_files(
         os.close(attestation.artifacts[0][1])
 
 
+def test_memfd_sealing_fails_closed_without_fcntl() -> None:
+    original_import = __import__
+
+    def import_without_fcntl(name: str, *args: object, **kwargs: object) -> object:
+        if name == "fcntl":
+            raise ImportError("fcntl is unavailable")
+        return original_import(name, *args, **kwargs)
+
+    with patch("builtins.__import__", side_effect=import_without_fcntl):
+        assert not forge_entrypoint._seal_memfd(-1)
+
+
 def test_nvidia_runtime_attestation_seals_bytes_against_host_mutation(tmp_path: Path) -> None:
     runtime_file = tmp_path / "nvidia-smi"
     trusted = b"trusted NVIDIA executable\n"

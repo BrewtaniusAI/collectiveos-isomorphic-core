@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import ctypes
-import fcntl
 import hashlib
 import os
 import stat
@@ -496,6 +495,24 @@ def _create_sealable_memfd(name: str) -> int:
     return descriptor
 
 
+def _seal_memfd(descriptor: int) -> bool:
+    try:
+        import fcntl
+
+        seals = (
+            getattr(fcntl, "F_SEAL_WRITE", 0x0008)
+            | getattr(fcntl, "F_SEAL_GROW", 0x0004)
+            | getattr(fcntl, "F_SEAL_SHRINK", 0x0002)
+            | getattr(fcntl, "F_SEAL_SEAL", 0x0001)
+        )
+        add_seals = getattr(fcntl, "F_ADD_SEALS", 1033)
+        get_seals = getattr(fcntl, "F_GET_SEALS", 1034)
+        fcntl.fcntl(descriptor, add_seals, seals)
+        return fcntl.fcntl(descriptor, get_seals) == seals
+    except (AttributeError, ImportError, OSError):
+        return False
+
+
 def nvidia_runtime_mount_attestation(
     records: tuple[tuple[Path, frozenset[str]], ...],
     approvals_path: Path = NVIDIA_RUNTIME_APPROVALS_PATH,
@@ -559,16 +576,7 @@ def nvidia_runtime_mount_attestation(
                 if approvals.get(path) != "sha256:" + file_digest.hexdigest():
                     return None
                 os.lseek(sealed_descriptor, 0, os.SEEK_SET)
-                seals = (
-                    getattr(fcntl, "F_SEAL_WRITE", 0x0008)
-                    | getattr(fcntl, "F_SEAL_GROW", 0x0004)
-                    | getattr(fcntl, "F_SEAL_SHRINK", 0x0002)
-                    | getattr(fcntl, "F_SEAL_SEAL", 0x0001)
-                )
-                add_seals = getattr(fcntl, "F_ADD_SEALS", 1033)
-                get_seals = getattr(fcntl, "F_GET_SEALS", 1034)
-                fcntl.fcntl(sealed_descriptor, add_seals, seals)
-                if fcntl.fcntl(sealed_descriptor, get_seals) != seals:
+                if not _seal_memfd(sealed_descriptor):
                     return None
                 os.set_inheritable(sealed_descriptor, True)
                 artifacts.append((path, sealed_descriptor))
