@@ -75,7 +75,7 @@ def _validate_manifest(manifest: object, manifest_path: Path) -> dict[str, objec
         raise SkillValidationError(f"{manifest_path}: invalid skill name")
     if not isinstance(version, str) or not VERSION_RE.fullmatch(version):
         raise SkillValidationError(f"{manifest_path}: version must be semantic x.y.z")
-    if status not in ALLOWED_STATUS:
+    if not isinstance(status, str) or status not in ALLOWED_STATUS:
         raise SkillValidationError(f"{manifest_path}: unsupported status {status!r}")
     if not isinstance(runtime_activation, bool):
         raise SkillValidationError(f"{manifest_path}: runtime_activation must be boolean")
@@ -103,22 +103,27 @@ def _validate_manifest(manifest: object, manifest_path: Path) -> dict[str, objec
         raise SkillValidationError(
             f"{manifest_path}: permissions.write must be [] or approval_required"
         )
-    if permissions["external_actions"] not in ALLOWED_EXTERNAL_ACTIONS:
+    external_actions = permissions["external_actions"]
+    if not isinstance(external_actions, str) or external_actions not in ALLOWED_EXTERNAL_ACTIONS:
         raise SkillValidationError(f"{manifest_path}: invalid external_actions permission")
 
     return manifest
 
 
 def _validate_evals(evals: object, eval_path: Path) -> None:
-    if not isinstance(evals, dict) or evals.get("version") != 1:
+    if (
+        not isinstance(evals, dict)
+        or type(evals.get("version")) is not int
+        or evals["version"] != 1
+    ):
         raise SkillValidationError(f"{eval_path}: eval format version must be 1")
     cases = evals.get("cases")
     if not isinstance(cases, list) or not cases:
         raise SkillValidationError(f"{eval_path}: cases must be a non-empty list")
     ids: set[str] = set()
     for case in cases:
-        if not isinstance(case, dict) or not isinstance(case.get("id"), str):
-            raise SkillValidationError(f"{eval_path}: every case requires a string id")
+        if not isinstance(case, dict) or not isinstance(case.get("id"), str) or not case["id"]:
+            raise SkillValidationError(f"{eval_path}: every case requires a non-empty string id")
         case_id = case["id"]
         if case_id in ids:
             raise SkillValidationError(f"{eval_path}: duplicate eval id {case_id!r}")
