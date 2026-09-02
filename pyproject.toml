@@ -22,7 +22,7 @@ cpu = [
 ]
 service = [
   "fastapi>=0.140,<0.141",
-  "uvicorn>=0.51,<0.52",
+  "uvicorn>=0.51,<0.53",
 ]
 dev = [
   "pytest>=8,<10",
