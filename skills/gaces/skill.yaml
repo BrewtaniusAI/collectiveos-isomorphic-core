@@ -1,0 +1,53 @@
+name: gaces
+version: 0.1.0
+status: draft
+runtime_activation: false
+summary: Governed configuration and execution gate for state-changing operations.
+category: operations
+triggers:
+  - create
+  - update
+  - delete
+  - send
+  - post
+  - deploy
+  - merge
+  - schedule
+inputs:
+  - action_request
+  - resolved_target
+  - exact_payload
+  - permissions
+  - validation_results
+outputs:
+  - action_plan
+  - approval_request
+  - execution_receipt
+  - rollback_record
+permissions:
+  read:
+    - target_metadata
+    - validation_results
+  write: approval_required
+  external_actions: approval_required
+workflow:
+  - classify_action
+  - resolve_target
+  - validate_scope_permissions_preconditions
+  - simulate_or_preview
+  - obtain_exact_approval
+  - execute_approved_payload
+  - verify_and_record
+invariants:
+  - exact_target_resolution
+  - exact_payload_confirmation
+  - no_unapproved_write
+  - secret_redaction
+  - auditability
+  - rollback_preference
+acceptance_checks:
+  - target_is_resolved
+  - payload_is_complete
+  - approval_precedes_execution
+  - receipt_is_captured
+  - rollback_path_is_documented_when_feasible

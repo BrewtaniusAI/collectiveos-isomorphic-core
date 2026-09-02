@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://collectiveos.local/schemas/skill.schema.json",
+  "title": "CollectiveOS Skill Package Manifest",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "name",
+    "version",
+    "status",
+    "runtime_activation",
+    "summary",
+    "category",
+    "triggers",
+    "inputs",
+    "outputs",
+    "permissions",
+    "invariants",
+    "acceptance_checks"
+  ],
+  "properties": {
+    "name": {"type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$"},
+    "version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"},
+    "status": {"enum": ["draft", "experimental", "active", "deprecated"]},
+    "runtime_activation": {"type": "boolean"},
+    "summary": {"type": "string", "minLength": 1},
+    "category": {"type": "string", "minLength": 1},
+    "triggers": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "inputs": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "outputs": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "permissions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["read", "write", "external_actions"],
+      "properties": {
+        "read": {"type": "array", "items": {"type": "string"}},
+        "write": {
+          "oneOf": [
+            {"type": "array", "maxItems": 0},
+            {"const": "approval_required"}
+          ]
+        },
+        "external_actions": {"enum": ["none", "approval_required"]}
+      }
+    },
+    "invariants": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+    "acceptance_checks": {"type": "array", "items": {"type": "string"}, "minItems": 1}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "draft"}}},
+      "then": {"properties": {"runtime_activation": {"const": false}}}
+    }
+  ]
+}
