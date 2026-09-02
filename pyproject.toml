@@ -21,7 +21,7 @@ cpu = [
   "llama-cpp-python>=0.3.34,<0.4",
 ]
 service = [
-  "fastapi>=0.140,<0.141",
+  "fastapi>=0.140,<0.142",
   "uvicorn>=0.51,<0.53",
 ]
 dev = [
