@@ -1,0 +1,113 @@
+{
+  "schema": "collective.capability-inventory.v1",
+  "status": "DECLARATIVE_NON_AUTHORIZING",
+  "capabilities": [
+    {
+      "capability_id": "meshy-3d-generation",
+      "provider": "Meshy",
+      "kind": "procedure",
+      "locality": "remote",
+      "cost_class": "free",
+      "available": true,
+      "connected": true,
+      "connection_required": false
+    },
+    {
+      "capability_id": "meshy.generate-remesh-rig",
+      "provider": "Meshy",
+      "kind": "actuator",
+      "locality": "remote",
+      "cost_class": "metered",
+      "available": true,
+      "connected": true,
+      "connection_required": true
+    },
+    {
+      "capability_id": "collective-rig-validator",
+      "provider": "CollectiveOS",
+      "kind": "verifier",
+      "locality": "local",
+      "cost_class": "free",
+      "available": true,
+      "connected": true,
+      "connection_required": false
+    },
+    {
+      "capability_id": "game-studio/web-3d-asset-pipeline",
+      "provider": "Game Studio",
+      "kind": "procedure",
+      "locality": "remote",
+      "cost_class": "free",
+      "available": true,
+      "connected": true,
+      "connection_required": false
+    },
+    {
+      "capability_id": "gltf-transform",
+      "provider": "Local CLI",
+      "kind": "actuator",
+      "locality": "local",
+      "cost_class": "free",
+      "available": true,
+      "connected": true,
+      "connection_required": false
+    },
+    {
+      "capability_id": "collective-asset-projection-validator",
+      "provider": "CollectiveOS",
+      "kind": "verifier",
+      "locality": "local",
+      "cost_class": "free",
+      "available": true,
+      "connected": true,
+      "connection_required": false
+    },
+    {
+      "capability_id": "game-studio/three-webgl-game",
+      "provider": "Game Studio",
+      "kind": "procedure",
+      "locality": "remote",
+      "cost_class": "free",
+      "available": true,
+      "connected": true,
+      "connection_required": false
+    },
+    {
+      "capability_id": "game-studio/game-playtest",
+      "provider": "Game Studio",
+      "kind": "procedure",
+      "locality": "remote",
+      "cost_class": "free",
+      "available": true,
+      "connected": true,
+      "connection_required": false
+    },
+    {
+      "capability_id": "threejs-playwright",
+      "provider": "Local Browser Harness",
+      "kind": "actuator",
+      "locality": "local",
+      "cost_class": "free",
+      "available": true,
+      "connected": true,
+      "connection_required": false
+    },
+    {
+      "capability_id": "collective-browser-playback-validator",
+      "provider": "CollectiveOS",
+      "kind": "verifier",
+      "locality": "local",
+      "cost_class": "free",
+      "available": true,
+      "connected": true,
+      "connection_required": false
+    }
+  ],
+  "authority": {
+    "discovery_is_advisory": true,
+    "authorizes_execution": false,
+    "authorizes_external_writes": false,
+    "authorizes_canonical_commit": false,
+    "authorizes_governance_promotion": false
+  }
+}

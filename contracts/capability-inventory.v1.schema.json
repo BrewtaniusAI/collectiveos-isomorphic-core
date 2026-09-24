@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "collective.capability-inventory.v1",
+  "title": "CollectiveOS Capability Inventory v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "status", "capabilities", "authority"],
+  "properties": {
+    "schema": {"const": "collective.capability-inventory.v1"},
+    "status": {"const": "DECLARATIVE_NON_AUTHORIZING"},
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "capability_id",
+          "provider",
+          "kind",
+          "locality",
+          "cost_class",
+          "available",
+          "connected",
+          "connection_required"
+        ],
+        "properties": {
+          "capability_id": {"type": "string", "minLength": 1},
+          "provider": {"type": "string", "minLength": 1},
+          "kind": {"enum": ["procedure", "actuator", "verifier"]},
+          "locality": {"enum": ["local", "remote", "hybrid"]},
+          "cost_class": {"enum": ["free", "metered", "unknown"]},
+          "available": {"type": "boolean"},
+          "connected": {"type": "boolean"},
+          "connection_required": {"type": "boolean"},
+          "metadata": {"type": "object"}
+        }
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "discovery_is_advisory",
+        "authorizes_execution",
+        "authorizes_external_writes",
+        "authorizes_canonical_commit",
+        "authorizes_governance_promotion"
+      ],
+      "properties": {
+        "discovery_is_advisory": {"const": true},
+        "authorizes_execution": {"const": false},
+        "authorizes_external_writes": {"const": false},
+        "authorizes_canonical_commit": {"const": false},
+        "authorizes_governance_promotion": {"const": false}
+      }
+    }
+  }
+}
