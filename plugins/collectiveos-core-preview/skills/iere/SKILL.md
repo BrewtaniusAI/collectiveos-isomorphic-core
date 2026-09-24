@@ -35,11 +35,13 @@ Use when the answer depends on current facts, public sources, repository content
 
 ## Confidence model
 
-For a claim c:
+For a claim \(c\):
 
-Conf(c) = sum(w_i * s_i) / sum(w_i)
+\[
+Conf(c)=\frac{\sum_{i=1}^{n}w_i s_i}{\sum_{i=1}^{n}w_i}
+\]
 
-where w_i is source weight and s_i is the support score in [0, 1]. Reduce confidence when strong sources materially disagree.
+where \(w_i\) is source weight and \(s_i\in[0,1]\) is the support score. Reduce confidence when strong sources materially disagree.
 
 ## Guardrails
 
