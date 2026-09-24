@@ -66,5 +66,3 @@ def resolve_path(
                 visited.add(output)
                 queue.append((output, next_path))
     return []
-
-[executed on device: Marks-Mac-mini.local (cc335bcf-2fab-4eac-84d3-b9e5551bc3a3)]
