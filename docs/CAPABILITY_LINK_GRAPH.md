@@ -160,3 +160,17 @@ A procedure may be supplied by one host package while a compatible actuator is s
 
 Compatibility is established by the declared input/output artifact contracts and verifier, not by provider identity. A provider name match is neither necessary nor sufficient for authorization.
 
+## Governed path resolution
+
+`tools/resolve_capability_graph.py` resolves the shortest verifier-gated path between artifact classes from a declarative capability graph.
+
+The resolver deliberately ignores bindings that lack:
+
+- `verification_required: true`;
+- a non-empty verifier;
+- an output authority ceiling of `proposal`, `candidate`, or `evidence`.
+
+Routing is advisory. Finding a path does not execute it and does not grant permissions. The resolved path is a plan candidate that still requires host/user permission, actuator execution, artifact verification, and declared promotion gates at runtime.
+
+The reference graph `examples/capability-graph.meshy-game-studio.v1.json` demonstrates cross-provider routing from `character-spec` to `browser-playback-evidence`.
+
