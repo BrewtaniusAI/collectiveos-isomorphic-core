@@ -86,5 +86,10 @@ def test_builder_reproduces_structural_contract(tmp_path: Path) -> None:
     build_marketplace(marketplace_path)
     assert boundary["authorizes_execution"] is False
     assert {item["name"] for item in boundary["canonical_skills"]} == set(STARTER_SKILLS)
-    assert json.loads((plugin_dir / "plugin.json").read_text(encoding="utf-8"))["name"] == PLUGIN_NAME
-    assert json.loads(marketplace_path.read_text(encoding="utf-8"))["plugins"][0]["name"] == PLUGIN_NAME
+    assert (
+        json.loads((plugin_dir / "plugin.json").read_text(encoding="utf-8"))["name"] == PLUGIN_NAME
+    )
+    assert (
+        json.loads(marketplace_path.read_text(encoding="utf-8"))["plugins"][0]["name"]
+        == PLUGIN_NAME
+    )

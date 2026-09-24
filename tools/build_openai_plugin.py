@@ -92,23 +92,17 @@ def build_plugin(destination: Path) -> dict[str, object]:
             }
         },
     }
-    (destination / "plugin.json").write_text(
-        json.dumps(plugin, indent=2) + "\n", encoding="utf-8"
-    )
+    (destination / "plugin.json").write_text(json.dumps(plugin, indent=2) + "\n", encoding="utf-8")
 
     for name in STARTER_SKILLS:
         source = CANONICAL_SKILLS / name
         manifest = load_manifest(source)
         if manifest.get("status") != "draft" or manifest.get("runtime_activation") is not False:
-            raise ValueError(
-                f"{name}: preview compiler expects draft/non-active canonical source"
-            )
+            raise ValueError(f"{name}: preview compiler expects draft/non-active canonical source")
         target = destination / "skills" / name
         refs = target / "references"
         refs.mkdir(parents=True, exist_ok=True)
-        (target / "SKILL.md").write_text(
-            render_skill(name, source, manifest), encoding="utf-8"
-        )
+        (target / "SKILL.md").write_text(render_skill(name, source, manifest), encoding="utf-8")
         shutil.copyfile(source / "skill.yaml", refs / "skill.yaml")
         shutil.copyfile(source / "tests/evals.yaml", refs / "evals.yaml")
         source_records.append(
@@ -165,9 +159,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Compile canonical CollectiveOS skills into an OpenAI portable plugin projection."
     )
-    parser.add_argument(
-        "--output", type=Path, default=ROOT / "plugins" / PLUGIN_NAME
-    )
+    parser.add_argument("--output", type=Path, default=ROOT / "plugins" / PLUGIN_NAME)
     parser.add_argument(
         "--marketplace",
         type=Path,
