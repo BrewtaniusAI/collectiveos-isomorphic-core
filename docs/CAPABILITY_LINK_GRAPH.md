@@ -112,3 +112,38 @@ No artifact crosses from candidate/evidence into canonical state solely because:
 - the provider returned a task success state.
 
 Promotion requires the verifier named by the receiving contract and any higher-lane governance required by that transition.
+
+## Capability chains
+
+A single capability link describes one procedural skill, one actuator, one artifact transition, and one verifier boundary. Real workflows compose multiple links. The chain contract at `contracts/capability-chain.v1.schema.json` makes that composition explicit.
+
+A valid chain is artifact-contiguous:
+
+```text
+link[n].output_artifact == link[n+1].input_artifact
+```
+
+Every link remains independently verifier-gated, and chain authority is bounded by the intersection across every link plus host and policy:
+
+```text
+A(chain) <= intersection(A(link_1), ..., A(link_n), A(host), A(policy))
+```
+
+The reference example `examples/meshy-game-studio-capability-chain.v1.json` records the sanitized structure of the 2026-09-24 proof:
+
+```text
+meshy-3d-generation
+  -> Meshy
+  -> rigged-character-candidate
+  -> rig verifier
+  -> game-studio/web-3d-asset-pipeline
+  -> glTF Transform
+  -> web-glb-projection-candidate
+  -> projection verifier
+  -> game-studio/three-webgl-game + game-studio/game-playtest
+  -> Three.js + Playwright
+  -> browser-playback-evidence
+```
+
+The chain is intentionally non-authorizing. Successful completion of every step still does not grant canonical commit or governance promotion.
+
