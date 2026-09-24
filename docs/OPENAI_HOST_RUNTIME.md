@@ -49,3 +49,17 @@ Run:
     pytest -q tests/test_skill_packages.py tests/test_openai_host_plugin.py
 
 The generated repo marketplace is intended for supported local ChatGPT desktop/Codex testing. Workspace GitHub marketplace import remains subject to OpenAI workspace/admin controls and does not grant app access or external permissions.
+
+## Skill-plugin capability links
+
+A host may expose a procedural skill and an executable plugin/app/tool in the same environment. CollectiveOS models those as separate logical roles joined by a declarative capability link.
+
+See `contracts/capability-link.v1.schema.json` and `docs/CAPABILITY_LINK_GRAPH.md`.
+
+The composition rule is fail-closed:
+
+    A(link(skill, actuator)) <=
+      A(skill) intersection A(actuator) intersection A(host) intersection A(policy)
+
+This prevents a skill from inheriting actuator authority merely because the host can route from one to the other. Provider output remains a proposal/candidate/evidence artifact until the declared verifier and promotion path admit it.
+
