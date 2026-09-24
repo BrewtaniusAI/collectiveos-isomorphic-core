@@ -35,7 +35,7 @@ def package_digest(package_dir: Path) -> str:
 def load_manifest(package_dir: Path) -> dict[str, object]:
     data = yaml.safe_load((package_dir / "skill.yaml").read_text(encoding="utf-8"))
     if not isinstance(data, dict):
-        raise ValueError(f"{package_dir}: invalid skill manifest")
+        raise TypeError(f"{package_dir}: invalid skill manifest")
     if data.get("name") != package_dir.name:
         raise ValueError(f"{package_dir}: skill name mismatch")
     return data
