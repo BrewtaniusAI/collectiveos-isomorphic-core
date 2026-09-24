@@ -147,3 +147,16 @@ meshy-3d-generation
 
 The chain is intentionally non-authorizing. Successful completion of every step still does not grant canonical commit or governance promotion.
 
+## Procedure and actuator provenance are independent
+
+A capability chain MUST NOT require the skill and actuator to originate from the same plugin or provider.
+
+A procedure may be supplied by one host package while a compatible actuator is supplied by another. Examples include:
+
+- Game Studio asset procedure -> Meshy-generated GLB -> glTF Transform;
+- Superpowers verification procedure -> GitHub or local execution evidence;
+- deployment procedure -> Vercel or Railway;
+- retrieval procedure -> Exa or another evidence provider.
+
+Compatibility is established by the declared input/output artifact contracts and verifier, not by provider identity. A provider name match is neither necessary nor sufficient for authorization.
+
