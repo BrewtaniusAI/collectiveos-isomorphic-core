@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "collective.capability-chain.v1",
+  "title": "CollectiveOS Capability Chain Contract v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "status", "objective", "links", "authority"],
+  "properties": {
+    "schema": {"const": "collective.capability-chain.v1"},
+    "status": {"const": "DECLARATIVE_NON_AUTHORIZING"},
+    "objective": {"type": "string", "minLength": 1},
+    "links": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "link_id", "skill_id", "actuator", "input_artifact", "output_artifact",
+          "output_authority", "verifier", "verification_required"
+        ],
+        "properties": {
+          "link_id": {"type": "string", "minLength": 1},
+          "skill_id": {"type": "string", "minLength": 1},
+          "actuator": {"type": "string", "minLength": 1},
+          "input_artifact": {"type": "string", "minLength": 1},
+          "output_artifact": {"type": "string", "minLength": 1},
+          "output_authority": {"enum": ["proposal", "candidate", "evidence"]},
+          "verifier": {"type": "string", "minLength": 1},
+          "verification_required": {"const": true}
+        }
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "composition_rule", "authorizes_execution", "authorizes_external_writes",
+        "authorizes_canonical_commit", "authorizes_governance_promotion"
+      ],
+      "properties": {
+        "composition_rule": {"const": "INTERSECTION_ACROSS_ALL_LINKS_HOST_AND_POLICY"},
+        "authorizes_execution": {"const": false},
+        "authorizes_external_writes": {"const": false},
+        "authorizes_canonical_commit": {"const": false},
+        "authorizes_governance_promotion": {"const": false}
+      }
+    }
+  }
+}
