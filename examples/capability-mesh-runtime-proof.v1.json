@@ -1,0 +1,29 @@
+{
+  "schema": "collective.capability-mesh-runtime-proof.v1",
+  "status": "SANITIZED_PUBLIC_FIXTURE",
+  "inventory": "examples/capability-inventory.sanitized.v1.json",
+  "templates": "examples/capability-binding-templates.v1.json",
+  "request": {
+    "source_artifact": "character-spec",
+    "target_artifact": "browser-playback-evidence"
+  },
+  "expected_binding_ids": [
+    "meshy-rigged-character",
+    "game-studio-web-projection",
+    "game-studio-browser-smoke"
+  ],
+  "rejection_constraints": [
+    {
+      "allowed_locality": ["local"]
+    },
+    {
+      "max_cost_class": "free"
+    },
+    {
+      "denied_providers": ["Meshy"]
+    },
+    {
+      "max_hops": 2
+    }
+  ]
+}

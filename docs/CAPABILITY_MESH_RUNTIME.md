@@ -97,3 +97,18 @@ v1 does not:
 - infer permissions from connection state;
 - promote artifacts to canonical state;
 - choose providers based on subjective quality rankings.
+
+## Reference proof
+
+`examples/capability-mesh-runtime-proof.v1.json` compiles the sanitized inventory against canonical binding templates and resolves:
+
+```text
+character-spec
+  -> rigged-character-candidate
+  -> web-glb-projection-candidate
+  -> browser-playback-evidence
+```
+
+The same fixture proves fail-closed rejection when routing is constrained to local-only execution, free-only cost, a Meshy provider deny, or fewer than three hops.
+
+The proof fixture is deliberately sanitized. It records no user, account, device, machine, credential, balance, task, local path, or signed URL data.
