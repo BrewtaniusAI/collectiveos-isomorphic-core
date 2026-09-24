@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 _REQUIRED_FALSE_AUTHORITY = (
@@ -27,20 +28,64 @@ _FORBIDDEN_METADATA_KEYS = {
     "credentials",
     "signed_url",
     "balance",
+    "email",
 }
+_FORBIDDEN_METADATA_KEY_FRAGMENTS = (
+    "token",
+    "secret",
+    "password",
+    "credential",
+    "api_key",
+    "account",
+    "user_id",
+    "device",
+    "machine",
+    "path",
+    "balance",
+    "email",
+)
+_EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
+_SIGNED_URL_RE = re.compile(r"(?:X-Amz-Signature|Signature)=", re.IGNORECASE)
+_LOCAL_PATH_RE = re.compile(r"(?:/Users/|[A-Za-z]:\\(?:Users|Documents|Downloads|GilesStack)\\)")
+_TOKEN_PREFIX_RE = re.compile(
+    r"\b(?:msy_|ghp_|github_pat_|sk-|hf_|xox[baprs]-)[A-Za-z0-9_-]{6,}",
+    re.IGNORECASE,
+)
 
 
 def _forbidden_metadata_keys(value: Any) -> set[str]:
     found: set[str] = set()
     if isinstance(value, dict):
         for key, child in value.items():
-            normalized = str(key).strip().lower()
-            if normalized in _FORBIDDEN_METADATA_KEYS:
+            normalized = str(key).strip().lower().replace("-", "_")
+            if normalized in _FORBIDDEN_METADATA_KEYS or any(
+                fragment in normalized for fragment in _FORBIDDEN_METADATA_KEY_FRAGMENTS
+            ):
                 found.add(normalized)
             found.update(_forbidden_metadata_keys(child))
     elif isinstance(value, list):
         for child in value:
             found.update(_forbidden_metadata_keys(child))
+    return found
+
+
+def _forbidden_metadata_values(value: Any) -> set[str]:
+    found: set[str] = set()
+    if isinstance(value, dict):
+        for child in value.values():
+            found.update(_forbidden_metadata_values(child))
+    elif isinstance(value, list):
+        for child in value:
+            found.update(_forbidden_metadata_values(child))
+    elif isinstance(value, str):
+        if _EMAIL_RE.search(value):
+            found.add("email")
+        if _SIGNED_URL_RE.search(value):
+            found.add("signed_url")
+        if _LOCAL_PATH_RE.search(value):
+            found.add("local_path")
+        if _TOKEN_PREFIX_RE.search(value):
+            found.add("token_prefix")
     return found
 
 
@@ -97,6 +142,8 @@ def validate_inventory(inventory: dict[str, Any]) -> list[str]:
 
     for key in sorted(_forbidden_metadata_keys(inventory)):
         violations.append(f"FORBIDDEN_METADATA_KEY:{key}")
+    for category in sorted(_forbidden_metadata_values(inventory)):
+        violations.append(f"FORBIDDEN_METADATA_VALUE:{category}")
 
     return violations
 

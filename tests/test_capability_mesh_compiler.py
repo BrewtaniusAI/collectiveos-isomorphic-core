@@ -63,3 +63,24 @@ def test_compiler_excludes_binding_when_required_capability_is_unavailable() -> 
     target["available"] = False
     graph = compile_mesh(inventory, _templates())
     assert "game-studio-browser-smoke" not in {item["binding_id"] for item in graph["bindings"]}
+
+
+def test_compiler_excludes_role_confused_binding() -> None:
+    inventory = copy.deepcopy(_inventory())
+    target = next(
+        item for item in inventory["capabilities"] if item["capability_id"] == "gltf-transform"
+    )
+    target["kind"] = "verifier"
+
+    graph = compile_mesh(inventory, _templates())
+
+    assert "game-studio-web-projection" not in {item["binding_id"] for item in graph["bindings"]}
+
+
+def test_compiler_skips_malformed_template_without_raising() -> None:
+    templates = copy.deepcopy(_templates())
+    del templates["templates"][0]["binding_id"]
+
+    graph = compile_mesh(_inventory(), templates)
+
+    assert "meshy-rigged-character" not in {item["binding_id"] for item in graph["bindings"]}

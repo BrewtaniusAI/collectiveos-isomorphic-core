@@ -46,3 +46,19 @@ def test_inventory_rejects_sensitive_metadata_keys_recursively() -> None:
 
     assert "FORBIDDEN_METADATA_KEY:device_id" in violations
     assert "FORBIDDEN_METADATA_KEY:api_token" in violations
+
+
+def test_inventory_rejects_sensitive_metadata_key_fragments_and_values() -> None:
+    inventory = copy.deepcopy(_inventory())
+    inventory["capabilities"][0]["metadata"] = {
+        "auth_token": "redacted",
+        "contact_email": "person@example.com",
+        "endpoint": "https://example.invalid/object?Signature=redacted",
+    }
+
+    violations = validate_inventory(inventory)
+
+    assert "FORBIDDEN_METADATA_KEY:auth_token" in violations
+    assert "FORBIDDEN_METADATA_KEY:contact_email" in violations
+    assert "FORBIDDEN_METADATA_VALUE:email" in violations
+    assert "FORBIDDEN_METADATA_VALUE:signed_url" in violations

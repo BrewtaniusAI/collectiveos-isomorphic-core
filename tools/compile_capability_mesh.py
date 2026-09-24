@@ -17,6 +17,41 @@ def _valid_templates(templates: dict[str, Any]) -> bool:
     return isinstance(templates.get("templates"), list)
 
 
+def _nonempty_string(value: Any) -> bool:
+    return isinstance(value, str) and bool(value)
+
+
+def _nonempty_string_list(value: Any) -> bool:
+    return isinstance(value, list) and bool(value) and all(_nonempty_string(item) for item in value)
+
+
+def _template_shape_valid(template: dict[str, Any]) -> bool:
+    return (
+        _nonempty_string(template.get("binding_id"))
+        and _nonempty_string(template.get("input_artifact"))
+        and _nonempty_string(template.get("output_artifact"))
+        and _nonempty_string_list(template.get("procedure_ids"))
+        and _nonempty_string_list(template.get("actuator_ids"))
+        and _nonempty_string_list(template.get("verifier_ids"))
+        and template.get("output_authority") in _ALLOWED_OUTPUT_AUTHORITY
+        and template.get("locality") in _ALLOWED_LOCALITY
+        and template.get("cost_class") in _ALLOWED_COST_CLASS
+    )
+
+
+def _roles_match(
+    by_id: dict[str, dict[str, Any]],
+    procedures: list[str],
+    actuators: list[str],
+    verifiers: list[str],
+) -> bool:
+    return (
+        all(by_id[item]["kind"] == "procedure" for item in procedures)
+        and all(by_id[item]["kind"] == "actuator" for item in actuators)
+        and all(by_id[item]["kind"] == "verifier" for item in verifiers)
+    )
+
+
 def compile_mesh(inventory: dict[str, Any], templates: dict[str, Any]) -> dict[str, Any]:
     graph: dict[str, Any] = {
         "schema": "collective.capability-graph.v1",
@@ -39,23 +74,16 @@ def compile_mesh(inventory: dict[str, Any], templates: dict[str, Any]) -> dict[s
     compiled: list[dict[str, Any]] = []
 
     for template in templates["templates"]:
-        if not isinstance(template, dict):
+        if not isinstance(template, dict) or not _template_shape_valid(template):
             continue
-        procedures = template.get("procedure_ids")
-        actuators = template.get("actuator_ids")
-        verifiers = template.get("verifier_ids")
-        if not all(
-            isinstance(value, list) and value for value in (procedures, actuators, verifiers)
-        ):
-            continue
+
+        procedures = template["procedure_ids"]
+        actuators = template["actuator_ids"]
+        verifiers = template["verifier_ids"]
         required = [*procedures, *actuators, *verifiers]
         if any(capability_id not in available for capability_id in required):
             continue
-        if template.get("output_authority") not in _ALLOWED_OUTPUT_AUTHORITY:
-            continue
-        if template.get("locality") not in _ALLOWED_LOCALITY:
-            continue
-        if template.get("cost_class") not in _ALLOWED_COST_CLASS:
+        if not _roles_match(by_id, procedures, actuators, verifiers):
             continue
 
         providers = sorted({by_id[capability_id]["provider"] for capability_id in required})
