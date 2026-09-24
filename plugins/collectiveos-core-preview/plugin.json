@@ -1,0 +1,22 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "collectiveos-core-preview",
+  "version": "0.1.0",
+  "description": "Proposal-only CollectiveOS host projection for constraint-governed planning, evidence synthesis, and state-change gating.",
+  "repository": "https://github.com/BrewtaniusAI/collectiveos-isomorphic-core",
+  "keywords": [
+    "governance",
+    "research",
+    "verification",
+    "operations",
+    "agentic"
+  ],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "CollectiveOS Core (Preview)",
+        "shortDescription": "Constraint-governed planning, evidence, and action gating."
+      }
+    }
+  }
+}

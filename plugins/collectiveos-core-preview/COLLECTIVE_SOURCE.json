@@ -1,0 +1,33 @@
+{
+  "authority_class": "proposal_and_evidence_only",
+  "authorizes_canonical_commit": false,
+  "authorizes_execution": false,
+  "authorizes_external_writes": false,
+  "canonical_skills": [
+    {
+      "name": "collective-os-core",
+      "runtime_activation": false,
+      "sha256": "843e649c61cbe362e4c9177798142ec678083c582556fd533b776f86354a4552",
+      "status": "draft",
+      "version": "0.1.0"
+    },
+    {
+      "name": "iere",
+      "runtime_activation": false,
+      "sha256": "a390e0ddf6ad55c5c23a696393219d8f3b6f093eaa85627fd771a6e7ea3e0785",
+      "status": "draft",
+      "version": "0.1.0"
+    },
+    {
+      "name": "gaces",
+      "runtime_activation": false,
+      "sha256": "92111ca00e3ae9773fb8501ebc5d45b4af0d7471f7bb36d993ca5459790a1abe",
+      "status": "draft",
+      "version": "0.1.0"
+    }
+  ],
+  "host": "openai-plugin",
+  "plugin": "collectiveos-core-preview",
+  "schema": "collective.host-projection.v1",
+  "version": "0.1.0"
+}
