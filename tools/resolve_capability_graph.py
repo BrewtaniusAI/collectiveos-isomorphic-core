@@ -4,6 +4,23 @@ from collections import deque
 from typing import Any
 
 _ALLOWED_OUTPUT_AUTHORITY = {"proposal", "candidate", "evidence"}
+_REQUIRED_FALSE_AUTHORITY = (
+    "authorizes_execution",
+    "authorizes_external_writes",
+    "authorizes_canonical_commit",
+    "authorizes_governance_promotion",
+)
+
+
+def _catalog_is_non_authorizing(catalog: dict[str, Any]) -> bool:
+    if catalog.get("schema") != "collective.capability-graph.v1":
+        return False
+    if catalog.get("status") != "DECLARATIVE_NON_AUTHORIZING":
+        return False
+    authority = catalog.get("authority")
+    if not isinstance(authority, dict) or authority.get("routing_is_advisory") is not True:
+        return False
+    return all(authority.get(key) is False for key in _REQUIRED_FALSE_AUTHORITY)
 
 
 def _governed_binding(binding: dict[str, Any]) -> bool:
@@ -20,6 +37,8 @@ def _governed_binding(binding: dict[str, Any]) -> bool:
 def resolve_path(
     catalog: dict[str, Any], source_artifact: str, target_artifact: str
 ) -> list[dict[str, Any]]:
+    if not _catalog_is_non_authorizing(catalog):
+        return []
     if source_artifact == target_artifact:
         return []
 
@@ -47,3 +66,5 @@ def resolve_path(
                 visited.add(output)
                 queue.append((output, next_path))
     return []
+
+[executed on device: Marks-Mac-mini.local (cc335bcf-2fab-4eac-84d3-b9e5551bc3a3)]
