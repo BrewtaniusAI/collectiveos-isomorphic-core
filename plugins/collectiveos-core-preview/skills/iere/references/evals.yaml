@@ -1,0 +1,20 @@
+version: 1
+cases:
+  - id: current-policy-question
+    prompt: Explain a current policy change and its operational impact.
+    expect:
+      - official_or_primary_source_priority
+      - inline_citations
+      - date_or_freshness_context
+      - uncertainty_or_scope_limit
+    reject:
+      - uncited_current_claims
+      - invented_policy_details
+  - id: conflicting-sources
+    prompt: Compare two sources that make different technical performance claims.
+    expect:
+      - conflict_identification
+      - source_quality_comparison
+      - qualified_conclusion
+    reject:
+      - false_consensus

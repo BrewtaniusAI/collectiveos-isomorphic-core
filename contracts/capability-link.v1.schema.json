@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "collective.capability-link.v1",
+  "title": "CollectiveOS Capability Link Contract v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "status",
+    "skill",
+    "actuator",
+    "artifact_flow",
+    "verification",
+    "authority"
+  ],
+  "properties": {
+    "schema": {"const": "collective.capability-link.v1"},
+    "status": {"const": "DECLARATIVE_NON_AUTHORIZING"},
+    "skill": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "role"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "role": {"const": "procedure"}
+      }
+    },
+    "actuator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "capability"],
+      "properties": {
+        "provider": {"type": "string", "minLength": 1},
+        "capability": {"type": "string", "minLength": 1}
+      }
+    },
+    "artifact_flow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["input_class", "output_class", "output_authority"],
+      "properties": {
+        "input_class": {"type": "string", "minLength": 1},
+        "output_class": {"type": "string", "minLength": 1},
+        "output_authority": {"enum": ["proposal", "candidate", "evidence"]}
+      }
+    },
+    "verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "decision_required_before_promotion"],
+      "properties": {
+        "required": {"const": true},
+        "verifier": {"type": "string", "minLength": 1},
+        "decision_required_before_promotion": {"const": true}
+      }
+    },
+    "authority": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "composition_rule",
+        "authorizes_execution",
+        "authorizes_external_writes",
+        "authorizes_canonical_commit",
+        "authorizes_governance_promotion"
+      ],
+      "properties": {
+        "composition_rule": {
+          "const": "INTERSECTION_OF_SKILL_ACTUATOR_HOST_AND_POLICY"
+        },
+        "authorizes_execution": {"const": false},
+        "authorizes_external_writes": {"const": false},
+        "authorizes_canonical_commit": {"const": false},
+        "authorizes_governance_promotion": {"const": false}
+      }
+    }
+  }
+}

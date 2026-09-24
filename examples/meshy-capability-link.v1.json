@@ -1,0 +1,29 @@
+{
+  "schema": "collective.capability-link.v1",
+  "status": "DECLARATIVE_NON_AUTHORIZING",
+  "skill": {
+    "id": "meshy-3d-generation",
+    "role": "procedure"
+  },
+  "actuator": {
+    "provider": "Meshy",
+    "capability": "generate-remesh-rig"
+  },
+  "artifact_flow": {
+    "input_class": "character_spec",
+    "output_class": "rigged_character_candidate",
+    "output_authority": "candidate"
+  },
+  "verification": {
+    "required": true,
+    "verifier": "Collective local asset/rig validator",
+    "decision_required_before_promotion": true
+  },
+  "authority": {
+    "composition_rule": "INTERSECTION_OF_SKILL_ACTUATOR_HOST_AND_POLICY",
+    "authorizes_execution": false,
+    "authorizes_external_writes": false,
+    "authorizes_canonical_commit": false,
+    "authorizes_governance_promotion": false
+  }
+}

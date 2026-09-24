@@ -1,0 +1,20 @@
+{
+  "name": "collectiveos",
+  "interface": {
+    "displayName": "CollectiveOS"
+  },
+  "plugins": [
+    {
+      "name": "collectiveos-core-preview",
+      "source": {
+        "source": "local",
+        "path": "./plugins/collectiveos-core-preview"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
