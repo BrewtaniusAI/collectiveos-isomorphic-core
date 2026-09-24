@@ -1,0 +1,39 @@
+{
+  "schema": "collective.capability-binding-templates.v1",
+  "status": "DECLARATIVE_NON_AUTHORIZING",
+  "templates": [
+    {
+      "binding_id": "meshy-rigged-character",
+      "procedure_ids": ["meshy-3d-generation"],
+      "actuator_ids": ["meshy.generate-remesh-rig"],
+      "verifier_ids": ["collective-rig-validator"],
+      "input_artifact": "character-spec",
+      "output_artifact": "rigged-character-candidate",
+      "output_authority": "candidate",
+      "locality": "remote",
+      "cost_class": "metered"
+    },
+    {
+      "binding_id": "game-studio-web-projection",
+      "procedure_ids": ["game-studio/web-3d-asset-pipeline"],
+      "actuator_ids": ["gltf-transform"],
+      "verifier_ids": ["collective-asset-projection-validator"],
+      "input_artifact": "rigged-character-candidate",
+      "output_artifact": "web-glb-projection-candidate",
+      "output_authority": "candidate",
+      "locality": "hybrid",
+      "cost_class": "free"
+    },
+    {
+      "binding_id": "game-studio-browser-smoke",
+      "procedure_ids": ["game-studio/three-webgl-game", "game-studio/game-playtest"],
+      "actuator_ids": ["threejs-playwright"],
+      "verifier_ids": ["collective-browser-playback-validator"],
+      "input_artifact": "web-glb-projection-candidate",
+      "output_artifact": "browser-playback-evidence",
+      "output_authority": "evidence",
+      "locality": "hybrid",
+      "cost_class": "free"
+    }
+  ]
+}

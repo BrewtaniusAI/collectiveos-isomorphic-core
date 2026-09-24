@@ -174,3 +174,15 @@ Routing is advisory. Finding a path does not execute it and does not grant permi
 
 The reference graph `examples/capability-graph.meshy-game-studio.v1.json` demonstrates cross-provider routing from `character-spec` to `browser-playback-evidence`.
 
+## Runtime routing constraints
+
+The Capability Mesh runtime may pass advisory constraints to the governed graph resolver:
+
+- `allowed_locality`: exact allowed binding locality values from `local`, `remote`, `hybrid`;
+- `max_cost_class`: maximum declared cost class using `free < metered < unknown`;
+- `required_providers`: providers that every selected binding must contain;
+- `denied_providers`: providers that exclude a binding;
+- `max_hops`: positive integer path-length ceiling.
+
+Constraints only remove eligible bindings. They never add authority, make an undeclared transition valid, or override an unsafe graph root. Missing routing metadata fails closed when a constraint depends on it.
+

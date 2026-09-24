@@ -4,28 +4,91 @@
   "title": "CollectiveOS Capability Graph v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema", "status", "bindings", "authority"],
+  "required": [
+    "schema",
+    "status",
+    "bindings",
+    "authority"
+  ],
   "properties": {
-    "schema": {"const": "collective.capability-graph.v1"},
-    "status": {"const": "DECLARATIVE_NON_AUTHORIZING"},
+    "schema": {
+      "const": "collective.capability-graph.v1"
+    },
+    "status": {
+      "const": "DECLARATIVE_NON_AUTHORIZING"
+    },
     "bindings": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "binding_id", "skill_id", "actuator", "input_artifact", "output_artifact",
-          "output_authority", "verifier", "verification_required"
+          "binding_id",
+          "skill_id",
+          "actuator",
+          "input_artifact",
+          "output_artifact",
+          "output_authority",
+          "verifier",
+          "verification_required"
         ],
         "properties": {
-          "binding_id": {"type": "string", "minLength": 1},
-          "skill_id": {"type": "string", "minLength": 1},
-          "actuator": {"type": "string", "minLength": 1},
-          "input_artifact": {"type": "string", "minLength": 1},
-          "output_artifact": {"type": "string", "minLength": 1},
-          "output_authority": {"enum": ["proposal", "candidate", "evidence"]},
-          "verifier": {"type": "string", "minLength": 1},
-          "verification_required": {"const": true}
+          "binding_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "skill_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "actuator": {
+            "type": "string",
+            "minLength": 1
+          },
+          "input_artifact": {
+            "type": "string",
+            "minLength": 1
+          },
+          "output_artifact": {
+            "type": "string",
+            "minLength": 1
+          },
+          "output_authority": {
+            "enum": [
+              "proposal",
+              "candidate",
+              "evidence"
+            ]
+          },
+          "verifier": {
+            "type": "string",
+            "minLength": 1
+          },
+          "verification_required": {
+            "const": true
+          },
+          "locality": {
+            "enum": [
+              "local",
+              "remote",
+              "hybrid"
+            ]
+          },
+          "cost_class": {
+            "enum": [
+              "free",
+              "metered",
+              "unknown"
+            ]
+          },
+          "providers": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          }
         }
       }
     },
@@ -33,15 +96,28 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "routing_is_advisory", "authorizes_execution", "authorizes_external_writes",
-        "authorizes_canonical_commit", "authorizes_governance_promotion"
+        "routing_is_advisory",
+        "authorizes_execution",
+        "authorizes_external_writes",
+        "authorizes_canonical_commit",
+        "authorizes_governance_promotion"
       ],
       "properties": {
-        "routing_is_advisory": {"const": true},
-        "authorizes_execution": {"const": false},
-        "authorizes_external_writes": {"const": false},
-        "authorizes_canonical_commit": {"const": false},
-        "authorizes_governance_promotion": {"const": false}
+        "routing_is_advisory": {
+          "const": true
+        },
+        "authorizes_execution": {
+          "const": false
+        },
+        "authorizes_external_writes": {
+          "const": false
+        },
+        "authorizes_canonical_commit": {
+          "const": false
+        },
+        "authorizes_governance_promotion": {
+          "const": false
+        }
       }
     }
   }
