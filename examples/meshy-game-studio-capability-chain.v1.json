@@ -1,0 +1,44 @@
+{
+  "schema": "collective.capability-chain.v1",
+  "status": "DECLARATIVE_NON_AUTHORIZING",
+  "objective": "Generate a rigged humanoid candidate, project it for web delivery, and verify browser playback without promoting provider output to canonical state.",
+  "links": [
+    {
+      "link_id": "meshy-build",
+      "skill_id": "meshy-3d-generation",
+      "actuator": "Meshy generate/refine/remesh/rig",
+      "input_artifact": "character-spec",
+      "output_artifact": "rigged-character-candidate",
+      "output_authority": "candidate",
+      "verifier": "collective-rig-validator",
+      "verification_required": true
+    },
+    {
+      "link_id": "mesh-to-web",
+      "skill_id": "game-studio/web-3d-asset-pipeline",
+      "actuator": "glTF Transform",
+      "input_artifact": "rigged-character-candidate",
+      "output_artifact": "web-glb-projection-candidate",
+      "output_authority": "candidate",
+      "verifier": "collective-asset-projection-validator",
+      "verification_required": true
+    },
+    {
+      "link_id": "web-runtime-smoke",
+      "skill_id": "game-studio/three-webgl-game + game-studio/game-playtest",
+      "actuator": "Three.js + Playwright",
+      "input_artifact": "web-glb-projection-candidate",
+      "output_artifact": "browser-playback-evidence",
+      "output_authority": "evidence",
+      "verifier": "collective-browser-playback-validator",
+      "verification_required": true
+    }
+  ],
+  "authority": {
+    "composition_rule": "INTERSECTION_ACROSS_ALL_LINKS_HOST_AND_POLICY",
+    "authorizes_execution": false,
+    "authorizes_external_writes": false,
+    "authorizes_canonical_commit": false,
+    "authorizes_governance_promotion": false
+  }
+}
