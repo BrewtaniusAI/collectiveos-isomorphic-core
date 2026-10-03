@@ -15,7 +15,7 @@ dependencies = [
 
 [project.optional-dependencies]
 weights = [
-  "huggingface-hub>=0.27,<2",
+  "huggingface-hub>=0.27,<3",
 ]
 cpu = [
   "llama-cpp-python>=0.3.34,<0.4",
